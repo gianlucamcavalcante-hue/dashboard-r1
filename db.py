@@ -1,11 +1,11 @@
 import psycopg2
 import psycopg2.extras
+import psycopg2.pool
 from contextlib import contextmanager
 
 # ---------- conexão ----------
 
 def _get_url():
-    """Lê a URL do banco: st.secrets em produção, variável de ambiente localmente."""
     try:
         import streamlit as st
         return st.secrets["DATABASE_URL"]
@@ -13,16 +13,28 @@ def _get_url():
         import os
         url = os.environ.get("DATABASE_URL")
         if not url:
-            raise RuntimeError(
-                "DATABASE_URL não encontrada. "
-                "Adicione em .streamlit/secrets.toml ou como variável de ambiente."
-            )
+            raise RuntimeError("DATABASE_URL não encontrada.")
         return url
+
+
+# Pool persistente — reutiliza conexões entre reruns do Streamlit
+_pool: psycopg2.pool.SimpleConnectionPool | None = None
+
+def _get_pool():
+    global _pool
+    if _pool is None or _pool.closed:
+        _pool = psycopg2.pool.SimpleConnectionPool(
+            1, 5,  # min 1, max 5 conexões simultâneas
+            _get_url(),
+            cursor_factory=psycopg2.extras.RealDictCursor,
+        )
+    return _pool
 
 
 @contextmanager
 def get_conn():
-    conn = psycopg2.connect(_get_url(), cursor_factory=psycopg2.extras.RealDictCursor)
+    pool = _get_pool()
+    conn = pool.getconn()
     try:
         yield conn
         conn.commit()
@@ -30,7 +42,7 @@ def get_conn():
         conn.rollback()
         raise
     finally:
-        conn.close()
+        pool.putconn(conn)  # devolve ao pool (não fecha)
 
 
 def _run(conn, sql, params=()):
