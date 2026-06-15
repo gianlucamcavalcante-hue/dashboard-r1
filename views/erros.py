@@ -4,7 +4,7 @@ import db
 import theme
 
 
-def render():
+def render(modo="dark"):
     col_f1, col_f2, col_f3 = st.columns(3)
     tipo_sel = col_f1.selectbox("Tipo de erro", ["Todos"] + db.TIPOS_ERRO)
     area_sel = col_f2.selectbox("Área", ["Todas"] + db.AREAS)
@@ -36,7 +36,7 @@ def render():
             theme.banner(
                 f"<b>{pct_exec:.0f}% dos erros são de execução</b> (interpretação + desatenção). "
                 "Seu gargalo não é conteúdo — treine gestão de tempo e atenção durante a prova.",
-                cor=theme.AMARELO,
+                cor=theme.AMARELO, modo=modo,
             )
 
         st.divider()

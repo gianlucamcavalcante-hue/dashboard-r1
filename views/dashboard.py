@@ -4,16 +4,9 @@ import plotly.express as px
 import db
 import theme
 
-PLOT_LAYOUT = dict(
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(0,0,0,0)",
-    font=dict(color="#c7cbdb"),
-    margin=dict(l=10, r=10, t=30, b=10),
-    legend=dict(bgcolor="rgba(0,0,0,0)"),
-)
+def render(modo="dark"):
+    PLOT_LAYOUT, grid_color = theme.plot_layout(modo)
 
-
-def render():
     provas_raw = db.listar_provas()
     if not provas_raw:
         st.warning("Nenhuma prova cadastrada. Adicione provas na aba **Provas**.")
@@ -69,7 +62,7 @@ def render():
                 f"<b>Gargalo detectado: execução de prova.</b> "
                 f"{pct_exec:.0f}% dos seus erros são de <b>interpretação</b> ou <b>desatenção</b> — "
                 f"o problema não é conteúdo, é gestão de tempo e atenção durante a prova.",
-                cor=theme.AMARELO,
+                cor=theme.AMARELO, modo=modo,
             )
 
     # evolução
@@ -85,8 +78,8 @@ def render():
                         annotation_text=f"Meta {meta}%", annotation_position="bottom right")
     fig_linha.update_traces(line=dict(width=3), marker=dict(size=10))
     fig_linha.update_layout(yaxis_range=[0, 100], **PLOT_LAYOUT)
-    fig_linha.update_xaxes(gridcolor="#232838")
-    fig_linha.update_yaxes(gridcolor="#232838")
+    fig_linha.update_xaxes(gridcolor=grid_color)
+    fig_linha.update_yaxes(gridcolor=grid_color)
     st.plotly_chart(fig_linha, use_container_width=True)
 
     st.divider()
@@ -116,10 +109,11 @@ def render():
             fig_bar.update_traces(texttemplate="%{text}%", textposition="outside",
                                   marker=dict(line=dict(width=0)))
             fig_bar.update_layout(showlegend=True, xaxis_range=[0, 105], **PLOT_LAYOUT)
-            fig_bar.update_xaxes(gridcolor="#232838")
+            fig_bar.update_xaxes(gridcolor=grid_color)
             st.plotly_chart(fig_bar, use_container_width=True)
             theme.banner(f"<b>Área prioritária: {area_fraca}</b> — apenas "
-                         f"{df_ag.iloc[0]['pct']}% de acerto.", cor=theme.VERMELHO, icone="🎯")
+                         f"{df_ag.iloc[0]['pct']}% de acerto.", cor=theme.VERMELHO, icone="🎯",
+                         modo=modo)
         else:
             st.info("Adicione desempenho por área ao cadastrar provas.")
 
@@ -143,5 +137,5 @@ def render():
                             annotation_text=f"Meta {meta}%")
         fig_banca.update_traces(texttemplate="%{text}%", textposition="outside")
         fig_banca.update_layout(yaxis_range=[0, 105], **PLOT_LAYOUT)
-        fig_banca.update_yaxes(gridcolor="#232838")
+        fig_banca.update_yaxes(gridcolor=grid_color)
         st.plotly_chart(fig_banca, use_container_width=True)

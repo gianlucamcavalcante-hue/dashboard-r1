@@ -13,7 +13,11 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
-theme.aplicar_estilo()
+
+if "modo" not in st.session_state:
+    st.session_state.modo = db.get_config("modo_tema", "dark")
+
+theme.aplicar_estilo(st.session_state.modo)
 
 # esconde completamente a barra lateral
 st.markdown(
@@ -22,10 +26,19 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# cabeçalho + controle de meta
-col_titulo, col_meta = st.columns([4, 1])
+# cabeçalho + tema + controle de meta
+col_titulo, col_tema, col_meta = st.columns([4, 1, 1])
 with col_titulo:
     st.title("🩺 Dashboard R1")
+with col_tema:
+    st.write("")
+    escuro = st.toggle("🌙 Escuro", value=(st.session_state.modo == "dark"),
+                        key="toggle_tema")
+    novo_modo = "dark" if escuro else "light"
+    if novo_modo != st.session_state.modo:
+        st.session_state.modo = novo_modo
+        db.set_config("modo_tema", novo_modo)
+        st.rerun()
 with col_meta:
     st.write("")
     meta = int(db.get_config("meta_percentual", 70))
@@ -42,8 +55,8 @@ tab_dash, tab_provas, tab_erros = st.tabs(
 )
 
 with tab_dash:
-    dashboard.render()
+    dashboard.render(st.session_state.modo)
 with tab_provas:
     provas.render()
 with tab_erros:
-    erros.render()
+    erros.render(st.session_state.modo)
