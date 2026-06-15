@@ -54,7 +54,7 @@ def _run(conn, sql, params=()):
 
 # ---------- constantes ----------
 
-AREAS = ["Clínica Médica", "Cirurgia", "Pediatria", "GO", "Preventiva"]
+AREAS = ["Clínica Médica", "Cirurgia", "Pediatria", "Ginecologia", "Obstetrícia", "Preventiva"]
 TIPOS_ERRO = ["conhecimento", "interpretação", "desatenção", "chute", "pegadinha"]
 
 
