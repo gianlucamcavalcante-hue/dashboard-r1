@@ -19,7 +19,6 @@ _PALETAS = {
         grid="#232838",
         sidebar="#13151f",
         titulo="linear-gradient(90deg,#a5b4fc,#818cf8)",
-        input_bg="#1c2030",
         shadow="rgba(0,0,0,0.35)",
     ),
     "light": dict(
@@ -31,7 +30,6 @@ _PALETAS = {
         grid="#e5e7ef",
         sidebar="#f5f6fb",
         titulo="linear-gradient(90deg,#6366f1,#4338ca)",
-        input_bg="#ffffff",
         shadow="rgba(99,102,241,0.08)",
     ),
 }
@@ -47,16 +45,8 @@ def aplicar_estilo(modo="dark"):
             background: {p['bg']};
         }}
 
-        /* texto base */
-        .stApp, .stApp p, .stApp span, .stApp label, .stApp li {{
-            color: {p['text']};
-        }}
-        .stApp .stCaption, .stApp small {{
-            color: {p['muted']};
-        }}
-
         /* títulos */
-        h1, h2, h3 {{ letter-spacing: -0.5px; font-weight: 700; color: {p['text']}; }}
+        h1, h2, h3 {{ letter-spacing: -0.5px; font-weight: 700; }}
         h1 {{ background: {p['titulo']};
              -webkit-background-clip: text; -webkit-text-fill-color: transparent; }}
 
@@ -107,9 +97,6 @@ def aplicar_estilo(modo="dark"):
         .stSelectbox div[data-baseweb="select"] > div,
         .stTextInput input, .stNumberInput input, .stDateInput input, .stTextArea textarea {{
             border-radius: 10px;
-            background-color: {p['input_bg']};
-            color: {p['text']};
-            border-color: {p['border']};
         }}
 
         /* alertas mais suaves */

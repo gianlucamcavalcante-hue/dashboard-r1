@@ -14,10 +14,10 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-if "modo" not in st.session_state:
-    st.session_state.modo = db.get_config("modo_tema", "dark")
+# segue o tema claro/escuro escolhido pelo usuário no menu "⋮" > Settings
+modo = st.context.theme.type or "dark"
 
-theme.aplicar_estilo(st.session_state.modo)
+theme.aplicar_estilo(modo)
 
 # esconde completamente a barra lateral
 st.markdown(
@@ -26,19 +26,12 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# cabeçalho + tema + controle de meta
-col_titulo, col_tema, col_meta = st.columns([4, 1, 1])
+# cabeçalho + controle de meta
+col_titulo, col_meta = st.columns([4, 1])
 with col_titulo:
     st.title("🩺 Dashboard R1")
-with col_tema:
-    st.write("")
-    escuro = st.toggle("🌙 Escuro", value=(st.session_state.modo == "dark"),
-                        key="toggle_tema")
-    novo_modo = "dark" if escuro else "light"
-    if novo_modo != st.session_state.modo:
-        st.session_state.modo = novo_modo
-        db.set_config("modo_tema", novo_modo)
-        st.rerun()
+    st.caption("Para alternar entre claro/escuro: menu **⋮** (canto superior direito) → "
+               "**Settings** → **Choose app theme**.")
 with col_meta:
     st.write("")
     meta = int(db.get_config("meta_percentual", 70))
@@ -55,8 +48,8 @@ tab_dash, tab_provas, tab_erros = st.tabs(
 )
 
 with tab_dash:
-    dashboard.render(st.session_state.modo)
+    dashboard.render(modo)
 with tab_provas:
     provas.render()
 with tab_erros:
-    erros.render(st.session_state.modo)
+    erros.render(modo)
