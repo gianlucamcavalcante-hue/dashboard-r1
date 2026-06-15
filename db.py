@@ -1,13 +1,14 @@
 import psycopg2
 import psycopg2.extras
 import psycopg2.pool
+import streamlit as st
 from contextlib import contextmanager
+from typing import Optional
 
 # ---------- conexão ----------
 
 def _get_url():
     try:
-        import streamlit as st
         return st.secrets["DATABASE_URL"]
     except Exception:
         import os
@@ -18,7 +19,7 @@ def _get_url():
 
 
 # Pool persistente — reutiliza conexões entre reruns do Streamlit
-_pool: psycopg2.pool.SimpleConnectionPool | None = None
+_pool: Optional[psycopg2.pool.SimpleConnectionPool] = None
 
 def _get_pool():
     global _pool
@@ -59,6 +60,7 @@ TIPOS_ERRO = ["conhecimento", "interpretação", "desatenção", "chute", "pegad
 
 # ---------- init ----------
 
+@st.cache_resource
 def init_db():
     with get_conn() as conn:
         _run(conn, """
@@ -109,6 +111,7 @@ def init_db():
 
 # ---------- config ----------
 
+@st.cache_data(ttl=300)
 def get_config(chave: str, default=None):
     with get_conn() as conn:
         cur = _run(conn, "SELECT valor FROM config WHERE chave = %s", (chave,))
@@ -122,14 +125,16 @@ def set_config(chave: str, valor):
              "INSERT INTO config (chave, valor) VALUES (%s, %s) "
              "ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor",
              (chave, str(valor)))
+    st.cache_data.clear()
 
 
 # ---------- provas ----------
 
+@st.cache_data(ttl=300)
 def listar_provas():
     with get_conn() as conn:
         cur = _run(conn, "SELECT * FROM prova ORDER BY data_feita DESC")
-        return cur.fetchall()
+        return [dict(r) for r in cur.fetchall()]
 
 
 def inserir_prova(banca, ano, data_feita, total_questoes, acertos):
@@ -138,12 +143,15 @@ def inserir_prova(banca, ano, data_feita, total_questoes, acertos):
             "INSERT INTO prova (banca, ano, data_feita, total_questoes, acertos) "
             "VALUES (%s, %s, %s, %s, %s) RETURNING id",
             (banca, ano, data_feita, total_questoes, acertos))
-        return cur.fetchone()["id"]
+        novo_id = cur.fetchone()["id"]
+    st.cache_data.clear()
+    return novo_id
 
 
 def deletar_prova(prova_id: int):
     with get_conn() as conn:
         _run(conn, "DELETE FROM prova WHERE id = %s", (prova_id,))
+    st.cache_data.clear()
 
 
 # ---------- desempenho por área ----------
@@ -154,8 +162,10 @@ def inserir_desempenho_area(prova_id, area, acertos, total):
              "INSERT INTO desempenho_area (prova_id, area, acertos, total) "
              "VALUES (%s, %s, %s, %s)",
              (prova_id, area, acertos, total))
+    st.cache_data.clear()
 
 
+@st.cache_data(ttl=300)
 def listar_desempenho_area(prova_id=None):
     with get_conn() as conn:
         if prova_id:
@@ -163,11 +173,12 @@ def listar_desempenho_area(prova_id=None):
                        "SELECT * FROM desempenho_area WHERE prova_id = %s", (prova_id,))
         else:
             cur = _run(conn, "SELECT * FROM desempenho_area")
-        return cur.fetchall()
+        return [dict(r) for r in cur.fetchall()]
 
 
 # ---------- erros ----------
 
+@st.cache_data(ttl=300)
 def listar_erros(tipo_erro=None, area=None, card_feito=None):
     sql = ("SELECT e.*, p.banca, p.ano FROM erro e "
            "LEFT JOIN prova p ON e.prova_id = p.id WHERE 1=1")
@@ -184,7 +195,7 @@ def listar_erros(tipo_erro=None, area=None, card_feito=None):
     sql += " ORDER BY e.prioridade DESC, e.id DESC"
     with get_conn() as conn:
         cur = _run(conn, sql, params)
-        return cur.fetchall()
+        return [dict(r) for r in cur.fetchall()]
 
 
 def inserir_erro(prova_id, numero_questao, area, tema, tipo_erro,
@@ -195,13 +206,16 @@ def inserir_erro(prova_id, numero_questao, area, tema, tipo_erro,
              "conceito, resposta, prioridade) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
              (prova_id, numero_questao, area, tema, tipo_erro,
               conceito, resposta, prioridade))
+    st.cache_data.clear()
 
 
 def marcar_card_feito(erro_id: int, feito: bool):
     with get_conn() as conn:
         _run(conn, "UPDATE erro SET card_feito = %s WHERE id = %s", (feito, erro_id))
+    st.cache_data.clear()
 
 
 def deletar_erro(erro_id: int):
     with get_conn() as conn:
         _run(conn, "DELETE FROM erro WHERE id = %s", (erro_id,))
+    st.cache_data.clear()
