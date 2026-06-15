@@ -55,7 +55,17 @@ def _run(conn, sql, params=()):
 # ---------- constantes ----------
 
 AREAS = ["Clínica Médica", "Cirurgia", "Pediatria", "Ginecologia", "Obstetrícia", "Preventiva"]
-TIPOS_ERRO = ["conhecimento", "interpretação", "desatenção", "chute", "pegadinha"]
+
+# Status de correção de cada área de uma prova
+STATUS_NAO_FIZ = "nao_fiz"     # não respondi essa área
+STATUS_PENDENTE = "pendente"   # respondi, mas ainda não corrigi
+STATUS_CORRIGIDA = "corrigida" # corrigida, com acertos/total preenchidos
+
+STATUS_LABEL = {
+    STATUS_NAO_FIZ: "⬜ Não fiz",
+    STATUS_PENDENTE: "🟡 A corrigir",
+    STATUS_CORRIGIDA: "✅ Corrigida",
+}
 
 
 # ---------- init ----------
@@ -69,33 +79,25 @@ def init_db():
                 banca          TEXT NOT NULL,
                 ano            INTEGER NOT NULL,
                 data_feita     DATE,
-                total_questoes INTEGER NOT NULL,
-                acertos        INTEGER NOT NULL
+                total_questoes INTEGER NOT NULL DEFAULT 0,
+                acertos        INTEGER NOT NULL DEFAULT 0
             )
         """)
+        # coluna de correção da prova inteira (adicionada para bancos já existentes)
+        _run(conn, "ALTER TABLE prova ADD COLUMN IF NOT EXISTS corrigida BOOLEAN DEFAULT FALSE")
+
         _run(conn, """
             CREATE TABLE IF NOT EXISTS desempenho_area (
                 id       SERIAL PRIMARY KEY,
                 prova_id INTEGER NOT NULL REFERENCES prova(id) ON DELETE CASCADE,
                 area     TEXT NOT NULL,
-                acertos  INTEGER NOT NULL,
-                total    INTEGER NOT NULL
+                acertos  INTEGER NOT NULL DEFAULT 0,
+                total    INTEGER NOT NULL DEFAULT 0
             )
         """)
-        _run(conn, """
-            CREATE TABLE IF NOT EXISTS erro (
-                id             SERIAL PRIMARY KEY,
-                prova_id       INTEGER REFERENCES prova(id) ON DELETE SET NULL,
-                numero_questao INTEGER,
-                area           TEXT,
-                tema           TEXT,
-                tipo_erro      TEXT,
-                conceito       TEXT,
-                resposta       TEXT,
-                prioridade     INTEGER DEFAULT 1,
-                card_feito     BOOLEAN DEFAULT FALSE
-            )
-        """)
+        # status de correção por área
+        _run(conn, "ALTER TABLE desempenho_area ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'corrigida'")
+
         _run(conn, """
             CREATE TABLE IF NOT EXISTS config (
                 chave TEXT PRIMARY KEY,
@@ -107,6 +109,18 @@ def init_db():
             VALUES ('meta_percentual', '70')
             ON CONFLICT (chave) DO NOTHING
         """)
+
+
+def _recalcular_prova(conn, prova_id):
+    """Atualiza total_questoes/acertos da prova como a soma das áreas já corrigidas."""
+    _run(conn, """
+        UPDATE prova SET
+            total_questoes = COALESCE((SELECT SUM(total) FROM desempenho_area
+                                       WHERE prova_id = %s AND status = 'corrigida'), 0),
+            acertos        = COALESCE((SELECT SUM(acertos) FROM desempenho_area
+                                       WHERE prova_id = %s AND status = 'corrigida'), 0)
+        WHERE id = %s
+    """, (prova_id, prova_id, prova_id))
 
 
 # ---------- config ----------
@@ -133,19 +147,30 @@ def set_config(chave: str, valor):
 @st.cache_data(ttl=300)
 def listar_provas():
     with get_conn() as conn:
-        cur = _run(conn, "SELECT * FROM prova ORDER BY data_feita DESC")
+        cur = _run(conn, "SELECT * FROM prova ORDER BY data_feita DESC, id DESC")
         return [dict(r) for r in cur.fetchall()]
 
 
-def inserir_prova(banca, ano, data_feita, total_questoes, acertos):
+def inserir_prova(banca, ano, data_feita, areas):
+    """Cria uma prova e suas áreas.
+
+    areas: lista de dicts {"area", "status", "acertos", "total"}.
+    Os totais da prova são derivados das áreas já corrigidas.
+    """
     with get_conn() as conn:
         cur = _run(conn,
             "INSERT INTO prova (banca, ano, data_feita, total_questoes, acertos) "
-            "VALUES (%s, %s, %s, %s, %s) RETURNING id",
-            (banca, ano, data_feita, total_questoes, acertos))
-        novo_id = cur.fetchone()["id"]
+            "VALUES (%s, %s, %s, 0, 0) RETURNING id",
+            (banca, ano, data_feita))
+        pid = cur.fetchone()["id"]
+        for a in areas:
+            _run(conn,
+                 "INSERT INTO desempenho_area (prova_id, area, status, acertos, total) "
+                 "VALUES (%s, %s, %s, %s, %s)",
+                 (pid, a["area"], a["status"], a.get("acertos", 0), a.get("total", 0)))
+        _recalcular_prova(conn, pid)
     st.cache_data.clear()
-    return novo_id
+    return pid
 
 
 def deletar_prova(prova_id: int):
@@ -156,12 +181,26 @@ def deletar_prova(prova_id: int):
 
 # ---------- desempenho por área ----------
 
-def inserir_desempenho_area(prova_id, area, acertos, total):
+def atualizar_areas(prova_id, areas, corrigida=None):
+    """Atualiza (upsert) várias áreas de uma prova numa única transação.
+
+    areas: lista de dicts {"area", "status", "acertos", "total"}.
+    corrigida: se informado, atualiza também a flag de prova corrigida.
+    """
     with get_conn() as conn:
-        _run(conn,
-             "INSERT INTO desempenho_area (prova_id, area, acertos, total) "
-             "VALUES (%s, %s, %s, %s)",
-             (prova_id, area, acertos, total))
+        for a in areas:
+            cur = _run(conn,
+                "UPDATE desempenho_area SET status = %s, acertos = %s, total = %s "
+                "WHERE prova_id = %s AND area = %s",
+                (a["status"], a.get("acertos", 0), a.get("total", 0), prova_id, a["area"]))
+            if cur.rowcount == 0:
+                _run(conn,
+                     "INSERT INTO desempenho_area (prova_id, area, status, acertos, total) "
+                     "VALUES (%s, %s, %s, %s, %s)",
+                     (prova_id, a["area"], a["status"], a.get("acertos", 0), a.get("total", 0)))
+        if corrigida is not None:
+            _run(conn, "UPDATE prova SET corrigida = %s WHERE id = %s", (corrigida, prova_id))
+        _recalcular_prova(conn, prova_id)
     st.cache_data.clear()
 
 
@@ -174,48 +213,3 @@ def listar_desempenho_area(prova_id=None):
         else:
             cur = _run(conn, "SELECT * FROM desempenho_area")
         return [dict(r) for r in cur.fetchall()]
-
-
-# ---------- erros ----------
-
-@st.cache_data(ttl=300)
-def listar_erros(tipo_erro=None, area=None, card_feito=None):
-    sql = ("SELECT e.*, p.banca, p.ano FROM erro e "
-           "LEFT JOIN prova p ON e.prova_id = p.id WHERE 1=1")
-    params = []
-    if tipo_erro:
-        sql += " AND e.tipo_erro = %s"
-        params.append(tipo_erro)
-    if area:
-        sql += " AND e.area = %s"
-        params.append(area)
-    if card_feito is not None:
-        sql += " AND e.card_feito = %s"
-        params.append(card_feito)
-    sql += " ORDER BY e.prioridade DESC, e.id DESC"
-    with get_conn() as conn:
-        cur = _run(conn, sql, params)
-        return [dict(r) for r in cur.fetchall()]
-
-
-def inserir_erro(prova_id, numero_questao, area, tema, tipo_erro,
-                 conceito, resposta, prioridade):
-    with get_conn() as conn:
-        _run(conn,
-             "INSERT INTO erro (prova_id, numero_questao, area, tema, tipo_erro, "
-             "conceito, resposta, prioridade) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-             (prova_id, numero_questao, area, tema, tipo_erro,
-              conceito, resposta, prioridade))
-    st.cache_data.clear()
-
-
-def marcar_card_feito(erro_id: int, feito: bool):
-    with get_conn() as conn:
-        _run(conn, "UPDATE erro SET card_feito = %s WHERE id = %s", (feito, erro_id))
-    st.cache_data.clear()
-
-
-def deletar_erro(erro_id: int):
-    with get_conn() as conn:
-        _run(conn, "DELETE FROM erro WHERE id = %s", (erro_id,))
-    st.cache_data.clear()

@@ -4,6 +4,7 @@ import plotly.express as px
 import db
 import theme
 
+
 def render(modo="dark"):
     PLOT_LAYOUT, grid_color = theme.plot_layout(modo)
 
@@ -12,14 +13,21 @@ def render(modo="dark"):
         st.warning("Nenhuma prova cadastrada. Adicione provas na aba **Provas**.")
         return
 
-    df = pd.DataFrame([dict(r) for r in provas_raw])
-    df["pct"] = (df["acertos"] / df["total_questoes"] * 100).round(1)
+    df = pd.DataFrame(provas_raw)
     df["data_feita"] = pd.to_datetime(df["data_feita"])
-
     meta = int(db.get_config("meta_percentual", 70))
 
-    areas_raw = db.listar_desempenho_area()
-    df_areas = pd.DataFrame([dict(r) for r in areas_raw]) if areas_raw else pd.DataFrame()
+    # só entram nos cálculos de % as provas com pelo menos uma área corrigida
+    df_corr = df[df["total_questoes"] > 0].copy()
+    n_pendentes = len(df) - len(df_corr)
+
+    if df_corr.empty:
+        st.info("Você já cadastrou provas, mas nenhuma área foi corrigida ainda. "
+                "Corrija alguma na aba **Provas** para ver as estatísticas.")
+        st.metric("Provas cadastradas", len(df))
+        return
+
+    df_corr["pct"] = (df_corr["acertos"] / df_corr["total_questoes"] * 100).round(1)
 
     def cor_pct(pct, meta):
         if pct >= meta:
@@ -29,45 +37,36 @@ def render(modo="dark"):
         return "inverse"
 
     # KPIs
-    media = df["pct"].mean()
-    melhor = df.loc[df["pct"].idxmax()]
-    pior = df.loc[df["pct"].idxmin()]
+    media = df_corr["pct"].mean()
+    melhor = df_corr.loc[df_corr["pct"].idxmax()]
+    pior = df_corr.loc[df_corr["pct"].idxmin()]
     gap = media - meta
 
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Provas feitas", len(df))
+    c1.metric("Provas com correção", len(df_corr),
+              delta=(f"{n_pendentes} a corrigir" if n_pendentes else None),
+              delta_color="off")
     c2.metric("Média geral", f"{media:.1f}%",
               delta=f"{gap:+.1f}% vs meta ({meta}%)", delta_color=cor_pct(media, meta))
     c3.metric("Melhor prova", f"{melhor['pct']}%", f"{melhor['banca']} {melhor['ano']}")
     c4.metric("Pior prova", f"{pior['pct']}%", f"{pior['banca']} {pior['ano']}",
               delta_color="inverse")
-    usp = df[df["banca"] == "USP-SP"]
+    usp = df_corr[df_corr["banca"] == "USP-SP"]
     if not usp.empty:
         media_usp = usp["pct"].mean()
         c5.metric("Média USP-SP", f"{media_usp:.1f}%", delta=f"{media_usp - meta:+.1f}% vs meta")
     else:
         c5.metric("Média USP-SP", "—")
 
-    st.divider()
+    if n_pendentes:
+        st.caption(f"⏳ {n_pendentes} prova(s) ainda sem nenhuma área corrigida — "
+                   "não entram nas médias acima.")
 
-    # análise automática de gargalo
-    erros_raw = db.listar_erros()
-    if erros_raw:
-        df_erros = pd.DataFrame([dict(r) for r in erros_raw])
-        total_erros = len(df_erros)
-        exec_erros = df_erros[df_erros["tipo_erro"].isin(["interpretação", "desatenção"])]
-        pct_exec = len(exec_erros) / total_erros * 100 if total_erros else 0
-        if pct_exec >= 50:
-            theme.banner(
-                f"<b>Gargalo detectado: execução de prova.</b> "
-                f"{pct_exec:.0f}% dos seus erros são de <b>interpretação</b> ou <b>desatenção</b> — "
-                f"o problema não é conteúdo, é gestão de tempo e atenção durante a prova.",
-                cor=theme.AMARELO, modo=modo,
-            )
+    st.divider()
 
     # evolução
     st.subheader("Evolução do desempenho")
-    df_sorted = df.sort_values("data_feita")
+    df_sorted = df_corr.sort_values("data_feita")
     fig_linha = px.line(
         df_sorted, x="data_feita", y="pct", color="banca", markers=True,
         labels={"data_feita": "Data", "pct": "Acertos (%)", "banca": "Banca"},
@@ -80,20 +79,22 @@ def render(modo="dark"):
     fig_linha.update_layout(yaxis_range=[0, 100], **PLOT_LAYOUT)
     fig_linha.update_xaxes(gridcolor=grid_color)
     fig_linha.update_yaxes(gridcolor=grid_color)
-    st.plotly_chart(fig_linha, use_container_width=True)
+    st.plotly_chart(fig_linha, use_container_width=True, key="dash_evolucao")
 
     st.divider()
 
     col_a, col_b = st.columns(2)
     with col_a:
         st.subheader("Desempenho por grande área")
-        if not df_areas.empty:
-            df_ag = (
-                df_areas.groupby("area")
-                .apply(lambda x: pd.Series({"acertos": x["acertos"].sum(),
-                                            "total": x["total"].sum()}))
-                .reset_index()
-            )
+        areas_raw = db.listar_desempenho_area()
+        df_areas = pd.DataFrame(areas_raw) if areas_raw else pd.DataFrame()
+        corr_areas = (df_areas[df_areas["status"] == db.STATUS_CORRIGIDA]
+                      if not df_areas.empty else pd.DataFrame())
+        if not corr_areas.empty:
+            df_ag = (corr_areas.groupby("area")
+                     .agg(acertos=("acertos", "sum"), total=("total", "sum"))
+                     .reset_index())
+            df_ag = df_ag[df_ag["total"] > 0]
             df_ag["pct"] = (df_ag["acertos"] / df_ag["total"] * 100).round(1)
             df_ag = df_ag.sort_values("pct")
             area_fraca = df_ag.iloc[0]["area"]
@@ -110,17 +111,17 @@ def render(modo="dark"):
                                   marker=dict(line=dict(width=0)))
             fig_bar.update_layout(showlegend=True, xaxis_range=[0, 105], **PLOT_LAYOUT)
             fig_bar.update_xaxes(gridcolor=grid_color)
-            st.plotly_chart(fig_bar, use_container_width=True)
+            st.plotly_chart(fig_bar, use_container_width=True, key="dash_areas")
             theme.banner(f"<b>Área prioritária: {area_fraca}</b> — apenas "
                          f"{df_ag.iloc[0]['pct']}% de acerto.", cor=theme.VERMELHO, icone="🎯",
                          modo=modo)
         else:
-            st.info("Adicione desempenho por área ao cadastrar provas.")
+            st.info("Corrija ao menos uma área para ver este gráfico.")
 
     with col_b:
         st.subheader("Desempenho por banca")
         df_banca = (
-            df.groupby("banca")
+            df_corr.groupby("banca")
             .apply(lambda x: pd.Series({"media_pct": x["pct"].mean().round(1),
                                         "provas": len(x)}))
             .reset_index().sort_values("media_pct", ascending=False)
@@ -138,4 +139,4 @@ def render(modo="dark"):
         fig_banca.update_traces(texttemplate="%{text}%", textposition="outside")
         fig_banca.update_layout(yaxis_range=[0, 105], **PLOT_LAYOUT)
         fig_banca.update_yaxes(gridcolor=grid_color)
-        st.plotly_chart(fig_banca, use_container_width=True)
+        st.plotly_chart(fig_banca, use_container_width=True, key="dash_banca")

@@ -1,7 +1,7 @@
 import streamlit as st
 import db
 import theme
-from views import dashboard, provas, erros
+from views import dashboard, provas
 
 db.init_db()
 
@@ -41,13 +41,9 @@ with col_meta:
             st.rerun()
 
 # navegação por abas (sem menu lateral)
-tab_dash, tab_provas, tab_erros = st.tabs(
-    ["📊  Dashboard", "📋  Provas", "🧠  Banco de Erros"]
-)
+tab_dash, tab_provas = st.tabs(["📊  Dashboard", "📋  Provas"])
 
 with tab_dash:
     dashboard.render(modo)
 with tab_provas:
-    provas.render()
-with tab_erros:
-    erros.render(modo)
+    provas.render(modo)
