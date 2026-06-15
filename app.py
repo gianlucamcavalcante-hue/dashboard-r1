@@ -1,11 +1,9 @@
 import streamlit as st
 import db
-import seed
 import theme
 from views import dashboard, provas, erros
 
 db.init_db()
-seed.seed()
 
 st.set_page_config(
     page_title="Dashboard R1",
