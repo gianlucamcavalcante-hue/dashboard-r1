@@ -17,17 +17,30 @@ def render(modo="dark"):
     df["data_feita"] = pd.to_datetime(df["data_feita"])
     meta = int(db.get_config("meta_percentual", 70))
 
-    # só entram nos cálculos de % as provas com pelo menos uma área corrigida
-    df_corr = df[df["total_questoes"] > 0].copy()
-    n_pendentes = len(df) - len(df_corr)
+    # áreas (usadas para saber quais provas estão completas)
+    areas_raw = db.listar_desempenho_area()
+    df_areas = pd.DataFrame(areas_raw) if areas_raw else pd.DataFrame()
 
-    if df_corr.empty:
-        st.info("Você já cadastrou provas, mas nenhuma área foi corrigida ainda. "
-                "Corrija alguma na aba **Provas** para ver as estatísticas.")
+    # uma prova é "completa" quando TODAS as áreas foram feitas e corrigidas
+    completas_ids = set()
+    if not df_areas.empty:
+        for pid, g in df_areas.groupby("prova_id"):
+            corrigidas = set(g.loc[g["status"] == db.STATUS_CORRIGIDA, "area"])
+            if set(db.AREAS).issubset(corrigidas):
+                completas_ids.add(pid)
+
+    # só as provas completas entram no balanço principal (médias, melhor/pior, evolução)
+    df_comp = df[df["id"].isin(completas_ids)].copy()
+    n_incompletas = len(df) - len(df_comp)
+
+    if df_comp.empty:
+        st.info("Você ainda não tem nenhuma prova **completa** (todas as áreas feitas e "
+                "corrigidas). As estatísticas principais só consideram provas completas — "
+                "termine de corrigir alguma na aba **Provas**.")
         st.metric("Provas cadastradas", len(df))
         return
 
-    df_corr["pct"] = (df_corr["acertos"] / df_corr["total_questoes"] * 100).round(1)
+    df_comp["pct"] = (df_comp["acertos"] / df_comp["total_questoes"] * 100).round(1)
 
     def cor_pct(pct, meta):
         if pct >= meta:
@@ -36,37 +49,37 @@ def render(modo="dark"):
             return "off"
         return "inverse"
 
-    # KPIs
-    media = df_corr["pct"].mean()
-    melhor = df_corr.loc[df_corr["pct"].idxmax()]
-    pior = df_corr.loc[df_corr["pct"].idxmin()]
+    # KPIs (somente provas completas)
+    media = df_comp["pct"].mean()
+    melhor = df_comp.loc[df_comp["pct"].idxmax()]
+    pior = df_comp.loc[df_comp["pct"].idxmin()]
     gap = media - meta
 
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Provas com correção", len(df_corr),
-              delta=(f"{n_pendentes} a corrigir" if n_pendentes else None),
+    c1.metric("Provas completas", len(df_comp),
+              delta=(f"{n_incompletas} incompleta(s)" if n_incompletas else None),
               delta_color="off")
     c2.metric("Média geral", f"{media:.1f}%",
               delta=f"{gap:+.1f}% vs meta ({meta}%)", delta_color=cor_pct(media, meta))
     c3.metric("Melhor prova", f"{melhor['pct']}%", f"{melhor['banca']} {melhor['ano']}")
     c4.metric("Pior prova", f"{pior['pct']}%", f"{pior['banca']} {pior['ano']}",
               delta_color="inverse")
-    usp = df_corr[df_corr["banca"] == "USP-SP"]
+    usp = df_comp[df_comp["banca"] == "USP-SP"]
     if not usp.empty:
         media_usp = usp["pct"].mean()
         c5.metric("Média USP-SP", f"{media_usp:.1f}%", delta=f"{media_usp - meta:+.1f}% vs meta")
     else:
         c5.metric("Média USP-SP", "—")
 
-    if n_pendentes:
-        st.caption(f"⏳ {n_pendentes} prova(s) ainda sem nenhuma área corrigida — "
-                   "não entram nas médias acima.")
+    if n_incompletas:
+        st.caption(f"ℹ️ {n_incompletas} prova(s) incompleta(s) (faltam áreas feitas ou corrigidas) "
+                   "não entram nas médias, melhor e pior prova acima.")
 
     st.divider()
 
     # evolução
     st.subheader("Evolução do desempenho")
-    df_sorted = df_corr.sort_values("data_feita")
+    df_sorted = df_comp.sort_values("data_feita")
     fig_linha = px.line(
         df_sorted, x="data_feita", y="pct", color="banca", markers=True,
         labels={"data_feita": "Data", "pct": "Acertos (%)", "banca": "Banca"},
@@ -86,8 +99,7 @@ def render(modo="dark"):
     col_a, col_b = st.columns(2)
     with col_a:
         st.subheader("Desempenho por grande área")
-        areas_raw = db.listar_desempenho_area()
-        df_areas = pd.DataFrame(areas_raw) if areas_raw else pd.DataFrame()
+        st.caption("Considera todas as áreas já corrigidas (mesmo de provas incompletas).")
         corr_areas = (df_areas[df_areas["status"] == db.STATUS_CORRIGIDA]
                       if not df_areas.empty else pd.DataFrame())
         if not corr_areas.empty:
@@ -121,7 +133,7 @@ def render(modo="dark"):
     with col_b:
         st.subheader("Desempenho por banca")
         df_banca = (
-            df_corr.groupby("banca")
+            df_comp.groupby("banca")
             .apply(lambda x: pd.Series({"media_pct": x["pct"].mean().round(1),
                                         "provas": len(x)}))
             .reset_index().sort_values("media_pct", ascending=False)
