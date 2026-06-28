@@ -7,6 +7,55 @@ import theme
 # ordem de status nos seletores
 STATUS_OPCOES = [db.STATUS_CORRIGIDA, db.STATUS_PENDENTE, db.STATUS_NAO_FIZ]
 
+MESES = ["", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+         "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+
+_CAT_COR = {"corrigida": theme.VERDE, "parcial": theme.AMARELO,
+            "a_corrigir": theme.AZUL, "sem": theme.ROXO}
+
+
+def _mes_ano(valor):
+    """Formata uma data como 'Abril/26'."""
+    try:
+        d = pd.to_datetime(valor)
+        return f"{MESES[d.month]}/{d.strftime('%y')}"
+    except Exception:
+        return "—"
+
+
+def _tabela_provas_html(df_f, modo):
+    """Tabela HTML estilizada (letra maior, mais legível) das provas filtradas."""
+    p = theme.palette(modo)
+    th = (f"padding:11px 16px;text-align:left;font-size:.8rem;font-weight:700;"
+          f"text-transform:uppercase;letter-spacing:.5px;color:{p['muted']};"
+          f"border-bottom:2px solid {p['border']}")
+    td = f"padding:11px 16px;text-align:left;font-size:1.02rem;color:{p['text']};border-bottom:1px solid {p['border']}"
+
+    head = "".join(f"<th style='{th}'>{c}</th>"
+                   for c in ["Banca", "Ano", "Data", "% Acertos", "Correção", "Não fiz"])
+    linhas = ""
+    for _, r in df_f.iterrows():
+        cor = _CAT_COR.get(r["categoria"], p["muted"])
+        chip = (f"<span style='background:{cor}22;color:{cor};border:1px solid {cor}55;"
+                f"padding:4px 11px;border-radius:999px;font-weight:600;"
+                f"white-space:nowrap'>{r['Correção']}</span>")
+        nao = r["Não fiz"]
+        nao_html = (f"<span style='color:{p['muted']}'>—</span>" if nao == "—"
+                    else f"<span style='color:{theme.VERMELHO}'>{nao}</span>")
+        celulas = [
+            f"<b>{r['banca']}</b>", str(r["ano"]), r["data_mes"],
+            f"<b>{r['% Acertos']}</b>", chip, nao_html,
+        ]
+        tds = "".join(f"<td style='{td}'>{c}</td>" for c in celulas)
+        linhas += f"<tr>{tds}</tr>"
+
+    st.markdown(
+        f"<div style='overflow-x:auto;border:1px solid {p['border']};border-radius:14px'>"
+        f"<table style='width:100%;border-collapse:collapse'>"
+        f"<thead><tr>{head}</tr></thead><tbody>{linhas}</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
+
 
 def _resumo(areas_prova: pd.DataFrame):
     """Resumo de correção de UMA prova a partir das suas áreas."""
@@ -57,6 +106,7 @@ def render(modo="dark"):
             return f"{pct}%{sufixo}"
 
         df["% Acertos"] = df.apply(fmt_pct, axis=1)
+        df["data_mes"] = df["data_feita"].map(_mes_ano)
 
         # filtros
         col_f1, col_f2, col_f3 = st.columns(3)
@@ -76,11 +126,10 @@ def render(modo="dark"):
         if corr_sel in _map_cat:
             df_f = df_f[df_f["categoria"] == _map_cat[corr_sel]]
 
-        st.dataframe(
-            df_f[["id", "banca", "ano", "data_feita", "% Acertos", "Correção", "Não fiz"]]
-            .rename(columns={"id": "ID", "banca": "Banca", "ano": "Ano",
-                             "data_feita": "Data"}),
-            use_container_width=True, hide_index=True)
+        if df_f.empty:
+            st.info("Nenhuma prova com esses filtros.")
+        else:
+            _tabela_provas_html(df_f.sort_values("data_feita", ascending=False), modo)
 
         # ---------------- desempenho por área ----------------
         st.divider()
@@ -263,19 +312,29 @@ def _desempenho_prova(pid, areas_all, meta, PLOT_LAYOUT, grid_color, modo):
     ap["ordem"] = ap["area"].map({a: i for i, a in enumerate(db.AREAS)})
     ap = ap.sort_values("ordem")
 
+    corr = ap[(ap["status"] == db.STATUS_CORRIGIDA) & (ap["total"] > 0)]
+
+    # média das áreas já corrigidas (mesmo se a prova ainda estiver incompleta)
+    if not corr.empty:
+        media_parcial = round(corr["acertos"].sum() / corr["total"].sum() * 100, 1)
+        completa = len(corr) == len(db.AREAS)
+        cm1, cm2 = st.columns(2)
+        cm1.metric("Áreas corrigidas", f"{len(corr)}/{len(db.AREAS)}")
+        cm2.metric("Média " + ("(completa)" if completa else "(áreas corrigidas)"),
+                   f"{media_parcial}%")
+
+        df_ag = corr[["area", "acertos", "total"]].copy()
+        df_ag["pct"] = (df_ag["acertos"] / df_ag["total"] * 100).round(1)
+        fig, _ = _grafico_areas(df_ag, meta, PLOT_LAYOUT, grid_color)
+        st.plotly_chart(fig, use_container_width=True, key=f"prov_area_{pid}")
+    else:
+        st.info("Nenhuma área desta prova foi corrigida ainda.")
+
     st.dataframe(
         ap[["area", "Status", "acertos", "total", "%"]].rename(columns={
             "area": "Área", "acertos": "Acertos", "total": "Total"}),
         hide_index=True, use_container_width=True,
         column_config={"%": st.column_config.NumberColumn("%", format="%.1f%%")})
-
-    corr = ap[ap["status"] == db.STATUS_CORRIGIDA]
-    corr = corr[corr["total"] > 0]
-    if not corr.empty:
-        df_ag = corr[["area", "acertos", "total"]].copy()
-        df_ag["pct"] = (df_ag["acertos"] / df_ag["total"] * 100).round(1)
-        fig, _ = _grafico_areas(df_ag, meta, PLOT_LAYOUT, grid_color)
-        st.plotly_chart(fig, use_container_width=True, key=f"prov_area_{pid}")
 
     pend = ap.loc[ap["status"] == db.STATUS_PENDENTE, "area"].tolist()
     nao = ap.loc[ap["status"] == db.STATUS_NAO_FIZ, "area"].tolist()

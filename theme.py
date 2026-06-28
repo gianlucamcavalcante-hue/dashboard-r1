@@ -116,6 +116,11 @@ def aplicar_estilo(modo="dark"):
     )
 
 
+def palette(modo="dark"):
+    """Devolve o dicionário de cores do tema escolhido."""
+    return _PALETAS.get(modo, _PALETAS["dark"])
+
+
 def plot_layout(modo="dark"):
     """Devolve (layout do plotly, cor da grade) para o tema escolhido."""
     p = _PALETAS.get(modo, _PALETAS["dark"])
