@@ -4,14 +4,13 @@ import plotly.express as px
 import db
 import theme
 
-# ordem de status nos seletores
-STATUS_OPCOES = [db.STATUS_CORRIGIDA, db.STATUS_PENDENTE, db.STATUS_NAO_FIZ]
+# Fiz / Não fiz nos seletores
+STATUS_OPCOES = [db.STATUS_FIZ, db.STATUS_NAO_FIZ]
 
 MESES = ["", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
          "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
 
-_CAT_COR = {"corrigida": theme.VERDE, "parcial": theme.AMARELO,
-            "a_corrigir": theme.AZUL, "sem": theme.ROXO}
+_CAT_COR = {"completa": theme.VERDE, "parcial": theme.AMARELO, "sem": theme.ROXO}
 
 
 def _mes_ano(valor):
@@ -23,28 +22,50 @@ def _mes_ano(valor):
         return "—"
 
 
+def _resumo(ap: pd.DataFrame):
+    """Resumo de UMA prova a partir das suas áreas."""
+    n_areas = len(db.AREAS)
+    if ap.empty:
+        return {"categoria": "sem", "label": "⬜ Sem notas", "nao_fiz": [],
+                "n_com_nota": 0, "n_feitas": 0, "n_estudadas": 0}
+    feitas = ap[ap["status"] == db.STATUS_FIZ]
+    com_nota = feitas[feitas["total"] > 0]
+    nao_fiz = ap.loc[ap["status"] == db.STATUS_NAO_FIZ, "area"].tolist()
+    n_com_nota = len(com_nota)
+    n_estudadas = int(feitas["estudada"].sum()) if "estudada" in feitas.columns else 0
+    if n_com_nota == 0:
+        cat, label = "sem", "⬜ Sem notas"
+    elif n_com_nota == n_areas:
+        cat, label = "completa", "✅ Completa"
+    else:
+        cat, label = "parcial", f"🟡 Parcial ({n_com_nota}/{n_areas})"
+    return {"categoria": cat, "label": label, "nao_fiz": nao_fiz,
+            "n_com_nota": n_com_nota, "n_feitas": len(feitas), "n_estudadas": n_estudadas}
+
+
 def _tabela_provas_html(df_f, modo):
     """Tabela HTML estilizada (letra maior, mais legível) das provas filtradas."""
     p = theme.palette(modo)
     th = (f"padding:11px 16px;text-align:left;font-size:.8rem;font-weight:700;"
           f"text-transform:uppercase;letter-spacing:.5px;color:{p['muted']};"
           f"border-bottom:2px solid {p['border']}")
-    td = f"padding:11px 16px;text-align:left;font-size:1.02rem;color:{p['text']};border-bottom:1px solid {p['border']}"
+    td = (f"padding:11px 16px;text-align:left;font-size:1.02rem;color:{p['text']};"
+          f"border-bottom:1px solid {p['border']}")
 
-    head = "".join(f"<th style='{th}'>{c}</th>"
-                   for c in ["Banca", "Ano", "Data", "% Acertos", "Correção", "Não fiz"])
+    cols = ["Banca", "Data", "% Acertos", "Situação", "Erros estudados", "Não fiz"]
+    head = "".join(f"<th style='{th}'>{c}</th>" for c in cols)
     linhas = ""
     for _, r in df_f.iterrows():
         cor = _CAT_COR.get(r["categoria"], p["muted"])
         chip = (f"<span style='background:{cor}22;color:{cor};border:1px solid {cor}55;"
                 f"padding:4px 11px;border-radius:999px;font-weight:600;"
-                f"white-space:nowrap'>{r['Correção']}</span>")
+                f"white-space:nowrap'>{r['Situação']}</span>")
         nao = r["Não fiz"]
         nao_html = (f"<span style='color:{p['muted']}'>—</span>" if nao == "—"
                     else f"<span style='color:{theme.VERMELHO}'>{nao}</span>")
         celulas = [
-            f"<b>{r['banca']}</b>", str(r["ano"]), r["data_mes"],
-            f"<b>{r['% Acertos']}</b>", chip, nao_html,
+            f"<b>{r['banca']}</b>", r["data_mes"], f"<b>{r['% Acertos']}</b>",
+            chip, r["Estudo"], nao_html,
         ]
         tds = "".join(f"<td style='{td}'>{c}</td>" for c in celulas)
         linhas += f"<tr>{tds}</tr>"
@@ -55,25 +76,6 @@ def _tabela_provas_html(df_f, modo):
         f"<thead><tr>{head}</tr></thead><tbody>{linhas}</tbody></table></div>",
         unsafe_allow_html=True,
     )
-
-
-def _resumo(areas_prova: pd.DataFrame):
-    """Resumo de correção de UMA prova a partir das suas áreas."""
-    if areas_prova.empty:
-        return {"label": "⬜ Sem dados", "categoria": "sem", "nao_fiz": []}
-    corr = (areas_prova["status"] == db.STATUS_CORRIGIDA).sum()
-    pend = (areas_prova["status"] == db.STATUS_PENDENTE).sum()
-    nao_fiz = areas_prova.loc[areas_prova["status"] == db.STATUS_NAO_FIZ, "area"].tolist()
-    feitas = corr + pend
-    if feitas == 0:
-        label, categoria = "⬜ Sem dados", "sem"
-    elif pend == 0:
-        label, categoria = "✅ Corrigida", "corrigida"
-    elif corr == 0:
-        label, categoria = "⏳ A corrigir", "a_corrigir"
-    else:
-        label, categoria = f"🟡 Parcial ({corr}/{feitas} áreas)", "parcial"
-    return {"label": label, "categoria": categoria, "nao_fiz": nao_fiz}
 
 
 def render(modo="dark"):
@@ -87,22 +89,24 @@ def render(modo="dark"):
     if provas_raw:
         df = pd.DataFrame(provas_raw)
 
-        # resumo de correção por prova
         resumos = {}
         for pid in df["id"]:
             ap = areas_all[areas_all["prova_id"] == pid] if not areas_all.empty else pd.DataFrame()
             resumos[pid] = _resumo(ap)
 
-        df["Correção"] = df["id"].map(lambda i: resumos[i]["label"])
+        df["Situação"] = df["id"].map(lambda i: resumos[i]["label"])
         df["categoria"] = df["id"].map(lambda i: resumos[i]["categoria"])
         df["Não fiz"] = df["id"].map(
             lambda i: ", ".join(resumos[i]["nao_fiz"]) if resumos[i]["nao_fiz"] else "—")
+        df["Estudo"] = df["id"].map(
+            lambda i: (f"{resumos[i]['n_estudadas']}/{resumos[i]['n_feitas']}"
+                       if resumos[i]["n_feitas"] else "—"))
 
         def fmt_pct(r):
             if r["total_questoes"] <= 0:
                 return "—"
             pct = round(r["acertos"] / r["total_questoes"] * 100, 1)
-            sufixo = " (parcial)" if r["categoria"] in ("parcial", "a_corrigir") else ""
+            sufixo = " (parcial)" if r["categoria"] != "completa" else ""
             return f"{pct}%{sufixo}"
 
         df["% Acertos"] = df.apply(fmt_pct, axis=1)
@@ -112,8 +116,8 @@ def render(modo="dark"):
         col_f1, col_f2, col_f3 = st.columns(3)
         bancas = ["Todas"] + sorted(df["banca"].unique().tolist())
         banca_sel = col_f1.selectbox("Banca", bancas)
-        corr_sel = col_f2.selectbox(
-            "Correção", ["Todas", "✅ Corrigida", "🟡 Parcial", "⏳ A corrigir"])
+        sit_sel = col_f2.selectbox(
+            "Situação", ["Todas", "✅ Completa", "🟡 Parcial", "⬜ Sem notas"])
         anos = ["Todos"] + sorted(df["ano"].unique().tolist(), reverse=True)
         ano_sel = col_f3.selectbox("Ano", anos)
 
@@ -122,9 +126,9 @@ def render(modo="dark"):
             df_f = df_f[df_f["banca"] == banca_sel]
         if ano_sel != "Todos":
             df_f = df_f[df_f["ano"] == ano_sel]
-        _map_cat = {"✅ Corrigida": "corrigida", "🟡 Parcial": "parcial", "⏳ A corrigir": "a_corrigir"}
-        if corr_sel in _map_cat:
-            df_f = df_f[df_f["categoria"] == _map_cat[corr_sel]]
+        _map_cat = {"✅ Completa": "completa", "🟡 Parcial": "parcial", "⬜ Sem notas": "sem"}
+        if sit_sel in _map_cat:
+            df_f = df_f[df_f["categoria"] == _map_cat[sit_sel]]
 
         if df_f.empty:
             st.info("Nenhuma prova com esses filtros.")
@@ -146,11 +150,18 @@ def render(modo="dark"):
             pid = int(escolha.split("ID ")[1].rstrip(")"))
             _desempenho_prova(pid, areas_all, meta, PLOT_LAYOUT, grid_color, modo)
 
-        # ---------------- corrigir / atualizar ----------------
+        # ---------------- evolução por área ----------------
         st.divider()
-        with st.expander("✏️ Corrigir / atualizar uma prova"):
-            st.caption("Marque o que já corrigiu. A prova vira **✅ Corrigida** "
-                       "automaticamente quando nenhuma área ficar pendente.")
+        st.subheader("📈 Evolução por área (ao longo do tempo)")
+        area_evo = st.selectbox("Área", db.AREAS, key="evo_area")
+        _evolucao_area(area_evo, areas_all, df, meta, PLOT_LAYOUT, grid_color, modo)
+
+        # ---------------- atualizar / estudo dos erros ----------------
+        st.divider()
+        with st.expander("✏️ Atualizar prova (notas e estudo dos erros)"):
+            st.caption("Preencha **acertos/total** das áreas que você fez (o % é calculado "
+                       "na hora). Marque **📚 estudei** quando já tiver estudado os erros "
+                       "daquela área.")
             opc_edit = {f"{r['banca']} {r['ano']} (ID {r['id']})": r["id"]
                         for _, r in df.iterrows()}
             label_sel = st.selectbox("Prova", list(opc_edit.keys()), key="edit_prova")
@@ -158,35 +169,41 @@ def render(modo="dark"):
             ap = areas_all[areas_all["prova_id"] == pid] if not areas_all.empty else pd.DataFrame()
             atual = {row["area"]: row for _, row in ap.iterrows()}
 
+            cab = st.columns([2.2, 1.8, 1, 1, 1.4])
+            for c, t in zip(cab, ["Área", "Fiz?", "Acertos", "Total", "Erros"]):
+                c.caption(t)
+
             novas_areas = []
             for area in db.AREAS:
                 cur = atual.get(area)
-                st_atual = cur["status"] if cur is not None else db.STATUS_PENDENTE
+                st_atual = cur["status"] if cur is not None else db.STATUS_FIZ
                 ac_atual = int(cur["acertos"]) if cur is not None else 0
                 tot_atual = int(cur["total"]) if cur is not None else 0
+                est_atual = bool(cur["estudada"]) if cur is not None and "estudada" in cur else False
 
-                c0, c1, c2, c3 = st.columns([2, 2, 1, 1])
+                c0, c1, c2, c3, c4 = st.columns([2.2, 1.8, 1, 1, 1.4])
                 c0.markdown(f"**{area}**")
-                idx = STATUS_OPCOES.index(st_atual) if st_atual in STATUS_OPCOES else 1
-                status = c1.selectbox("status", STATUS_OPCOES, index=idx,
+                idx = STATUS_OPCOES.index(st_atual) if st_atual in STATUS_OPCOES else 0
+                status = c1.selectbox("fiz", STATUS_OPCOES, index=idx,
                                       format_func=lambda s: db.STATUS_LABEL[s],
                                       key=f"edit_st_{pid}_{area}", label_visibility="collapsed")
                 ac = c2.number_input("acertos", min_value=0, value=ac_atual, step=1,
                                      key=f"edit_ac_{pid}_{area}", label_visibility="collapsed")
                 tot = c3.number_input("total", min_value=0, value=tot_atual, step=1,
                                       key=f"edit_tot_{pid}_{area}", label_visibility="collapsed")
-                novas_areas.append({"area": area, "status": status,
-                                    "acertos": int(ac), "total": int(tot)})
+                est = c4.checkbox("📚 estudei", value=est_atual, key=f"edit_es_{pid}_{area}")
+                novas_areas.append({"area": area, "status": status, "acertos": int(ac),
+                                    "total": int(tot), "estudada": bool(est)})
 
-            if st.button("💾 Salvar correção", type="primary", key="salvar_corr"):
+            if st.button("💾 Salvar", type="primary", key="salvar_corr"):
                 erro = next((a for a in novas_areas
-                             if a["status"] == db.STATUS_CORRIGIDA and a["acertos"] > a["total"]),
+                             if a["status"] == db.STATUS_FIZ and a["acertos"] > a["total"]),
                             None)
                 if erro:
                     st.error(f"{erro['area']}: acertos não pode ser maior que total.")
                 else:
                     db.atualizar_areas(pid, novas_areas)
-                    st.success("Correção atualizada!")
+                    st.success("Atualizado!")
                     st.rerun()
 
         # ---------------- excluir ----------------
@@ -204,8 +221,9 @@ def render(modo="dark"):
     # ---------------- adicionar nova prova ----------------
     st.divider()
     st.subheader("➕ Adicionar nova prova")
-    st.caption("Para cada área escolha: **✅ Corrigida** (preencha acertos e total), "
-               "**🟡 A corrigir** (fiz mas ainda não corrigi) ou **⬜ Não fiz**.")
+    st.caption("Para cada área marque **Fiz** (preencha acertos e total — o % sai na hora) "
+               "ou **Não fiz**. O estudo dos erros você marca depois, em "
+               "*Atualizar prova*.")
 
     with st.form("nova_prova", clear_on_submit=True):
         col1, col2, col3 = st.columns(3)
@@ -214,30 +232,28 @@ def render(modo="dark"):
         data_feita = col3.date_input("Data que fiz")
 
         st.markdown("**Desempenho por grande área**")
-        cabec = st.columns([2, 2, 1, 1])
-        cabec[0].caption("Área")
-        cabec[1].caption("Status")
-        cabec[2].caption("Acertos")
-        cabec[3].caption("Total")
+        cab = st.columns([2.2, 1.8, 1, 1])
+        for c, t in zip(cab, ["Área", "Fiz?", "Acertos", "Total"]):
+            c.caption(t)
 
         entradas = []
         for area in db.AREAS:
-            c0, c1, c2, c3 = st.columns([2, 2, 1, 1])
+            c0, c1, c2, c3 = st.columns([2.2, 1.8, 1, 1])
             c0.markdown(f"**{area}**")
-            status = c1.selectbox("status", STATUS_OPCOES, index=0,
+            status = c1.selectbox("fiz", STATUS_OPCOES, index=0,
                                   format_func=lambda s: db.STATUS_LABEL[s],
                                   key=f"novo_st_{area}", label_visibility="collapsed")
             ac = c2.number_input("acertos", min_value=0, value=0, step=1,
                                  key=f"novo_ac_{area}", label_visibility="collapsed")
             tot = c3.number_input("total", min_value=0, value=0, step=1,
                                   key=f"novo_tot_{area}", label_visibility="collapsed")
-            entradas.append({"area": area, "status": status,
-                             "acertos": int(ac), "total": int(tot)})
+            entradas.append({"area": area, "status": status, "acertos": int(ac),
+                             "total": int(tot), "estudada": False})
 
         submitted = st.form_submit_button("Salvar prova", type="primary")
         if submitted:
             erro = next((a for a in entradas
-                         if a["status"] == db.STATUS_CORRIGIDA and a["acertos"] > a["total"]),
+                         if a["status"] == db.STATUS_FIZ and a["acertos"] > a["total"]),
                         None)
             if not banca.strip():
                 st.error("Informe a banca.")
@@ -252,7 +268,7 @@ def render(modo="dark"):
 # ---------------- helpers de gráfico ----------------
 
 def _grafico_areas(df_ag, meta, PLOT_LAYOUT, grid_color):
-    """df_ag: colunas area, pct (já filtrado para áreas com dados)."""
+    """df_ag: colunas area, pct (já filtrado para áreas com nota)."""
     df_ag = df_ag.sort_values("pct")
     area_fraca = df_ag.iloc[0]["area"]
     df_ag["cor"] = df_ag["area"].apply(
@@ -269,13 +285,17 @@ def _grafico_areas(df_ag, meta, PLOT_LAYOUT, grid_color):
     return fig, area_fraca
 
 
-def _desempenho_global(areas_all, meta, PLOT_LAYOUT, grid_color, modo):
+def _areas_com_nota(areas_all):
+    """Áreas efetivamente feitas e com nota (total > 0)."""
     if areas_all.empty:
-        st.info("Nenhum dado de área ainda.")
-        return
-    corr = areas_all[areas_all["status"] == db.STATUS_CORRIGIDA]
+        return pd.DataFrame()
+    return areas_all[(areas_all["status"] == db.STATUS_FIZ) & (areas_all["total"] > 0)]
+
+
+def _desempenho_global(areas_all, meta, PLOT_LAYOUT, grid_color, modo):
+    corr = _areas_com_nota(areas_all)
     if corr.empty:
-        st.info("Nenhuma área corrigida ainda. Corrija alguma prova para ver o global.")
+        st.info("Nenhuma área com nota ainda. Preencha acertos/total de alguma prova.")
         return
 
     df_ag = (corr.groupby("area")
@@ -288,13 +308,12 @@ def _desempenho_global(areas_all, meta, PLOT_LAYOUT, grid_color, modo):
     st.plotly_chart(fig, use_container_width=True, key="prov_area_global")
     theme.banner(f"<b>Área prioritária: {area_fraca}</b> — "
                  f"{df_ag.loc[df_ag['area'] == area_fraca, 'pct'].values[0]}% de acerto "
-                 f"somando todas as provas corrigidas.",
+                 f"somando todas as provas.",
                  cor=theme.VERMELHO, icone="🎯", modo=modo)
 
-    # áreas sem dados corrigidos
     sem_dados = [a for a in db.AREAS if a not in df_ag["area"].tolist()]
     if sem_dados:
-        st.caption("Ainda sem dados corrigidos em: " + ", ".join(sem_dados))
+        st.caption("Ainda sem notas em: " + ", ".join(sem_dados))
 
 
 def _desempenho_prova(pid, areas_all, meta, PLOT_LAYOUT, grid_color, modo):
@@ -306,39 +325,71 @@ def _desempenho_prova(pid, areas_all, meta, PLOT_LAYOUT, grid_color, modo):
     ap["Status"] = ap["status"].map(db.STATUS_LABEL)
     ap["%"] = ap.apply(
         lambda r: round(r["acertos"] / r["total"] * 100, 1)
-        if r["status"] == db.STATUS_CORRIGIDA and r["total"] > 0 else None, axis=1)
-
-    # garante ordem das áreas
+        if r["status"] == db.STATUS_FIZ and r["total"] > 0 else None, axis=1)
+    ap["Erros"] = ap.apply(
+        lambda r: "📚 estudado" if (r["status"] == db.STATUS_FIZ and r.get("estudada"))
+        else ("—" if r["status"] == db.STATUS_FIZ else ""), axis=1)
     ap["ordem"] = ap["area"].map({a: i for i, a in enumerate(db.AREAS)})
     ap = ap.sort_values("ordem")
 
-    corr = ap[(ap["status"] == db.STATUS_CORRIGIDA) & (ap["total"] > 0)]
-
-    # média das áreas já corrigidas (mesmo se a prova ainda estiver incompleta)
-    if not corr.empty:
-        media_parcial = round(corr["acertos"].sum() / corr["total"].sum() * 100, 1)
-        completa = len(corr) == len(db.AREAS)
+    com_nota = ap[(ap["status"] == db.STATUS_FIZ) & (ap["total"] > 0)]
+    if not com_nota.empty:
+        media_parcial = round(com_nota["acertos"].sum() / com_nota["total"].sum() * 100, 1)
+        completa = len(com_nota) == len(db.AREAS)
         cm1, cm2 = st.columns(2)
-        cm1.metric("Áreas corrigidas", f"{len(corr)}/{len(db.AREAS)}")
-        cm2.metric("Média " + ("(completa)" if completa else "(áreas corrigidas)"),
+        cm1.metric("Áreas com nota", f"{len(com_nota)}/{len(db.AREAS)}")
+        cm2.metric("Média " + ("(completa)" if completa else "(áreas feitas)"),
                    f"{media_parcial}%")
 
-        df_ag = corr[["area", "acertos", "total"]].copy()
+        df_ag = com_nota[["area", "acertos", "total"]].copy()
         df_ag["pct"] = (df_ag["acertos"] / df_ag["total"] * 100).round(1)
         fig, _ = _grafico_areas(df_ag, meta, PLOT_LAYOUT, grid_color)
         st.plotly_chart(fig, use_container_width=True, key=f"prov_area_{pid}")
     else:
-        st.info("Nenhuma área desta prova foi corrigida ainda.")
+        st.info("Nenhuma área desta prova tem nota ainda.")
 
     st.dataframe(
-        ap[["area", "Status", "acertos", "total", "%"]].rename(columns={
+        ap[["area", "Status", "acertos", "total", "%", "Erros"]].rename(columns={
             "area": "Área", "acertos": "Acertos", "total": "Total"}),
         hide_index=True, use_container_width=True,
         column_config={"%": st.column_config.NumberColumn("%", format="%.1f%%")})
 
-    pend = ap.loc[ap["status"] == db.STATUS_PENDENTE, "area"].tolist()
     nao = ap.loc[ap["status"] == db.STATUS_NAO_FIZ, "area"].tolist()
-    if pend:
-        st.caption("🟡 Ainda a corrigir: " + ", ".join(pend))
     if nao:
         st.caption("⬜ Não fiz: " + ", ".join(nao))
+
+
+def _evolucao_area(area, areas_all, df_provas, meta, PLOT_LAYOUT, grid_color, modo):
+    corr = _areas_com_nota(areas_all)
+    a = corr[corr["area"] == area].copy() if not corr.empty else pd.DataFrame()
+    if a.empty:
+        st.info(f"Nenhuma nota registrada em **{area}** ainda.")
+        return
+
+    a["pct"] = (a["acertos"] / a["total"] * 100).round(1)
+    m = a.merge(df_provas[["id", "banca", "ano", "data_feita"]],
+                left_on="prova_id", right_on="id")
+    m["data_feita"] = pd.to_datetime(m["data_feita"])
+    m = m.sort_values("data_feita")
+    m["rotulo"] = m["banca"] + " " + m["ano"].astype(str)
+
+    fig = px.line(
+        m, x="data_feita", y="pct", markers=True,
+        hover_data={"rotulo": True, "acertos": True, "total": True, "data_feita": False},
+        labels={"data_feita": "Data", "pct": f"% em {area}"})
+    fig.add_hline(y=meta, line_dash="dash", line_color=theme.AMARELO,
+                  annotation_text=f"Meta {meta}%", annotation_position="bottom right")
+    fig.update_traces(line=dict(width=3, color=theme.ROXO), marker=dict(size=11, color=theme.ROXO))
+    fig.update_layout(yaxis_range=[0, 100], **PLOT_LAYOUT)
+    fig.update_xaxes(gridcolor=grid_color)
+    fig.update_yaxes(gridcolor=grid_color)
+    st.plotly_chart(fig, use_container_width=True, key=f"evo_{area}")
+
+    if len(m) >= 2:
+        ini, fim = m["pct"].iloc[0], m["pct"].iloc[-1]
+        delta = round(fim - ini, 1)
+        tend = "📈 subindo" if delta > 0 else ("📉 caindo" if delta < 0 else "➡️ estável")
+        st.caption(f"De {_mes_ano(m['data_feita'].iloc[0])} a {_mes_ano(m['data_feita'].iloc[-1])}: "
+                   f"{ini}% → {fim}% ({tend}, {delta:+.1f} pts).")
+    else:
+        st.caption("Registre essa área em mais provas para ver a tendência ao longo do tempo.")

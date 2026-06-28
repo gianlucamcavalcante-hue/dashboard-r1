@@ -56,15 +56,14 @@ def _run(conn, sql, params=()):
 
 AREAS = ["Clínica Médica", "Cirurgia", "Pediatria", "Ginecologia", "Obstetrícia", "Preventiva"]
 
-# Status de correção de cada área de uma prova
-STATUS_NAO_FIZ = "nao_fiz"     # não respondi essa área
-STATUS_PENDENTE = "pendente"   # respondi, mas ainda não corrigi
-STATUS_CORRIGIDA = "corrigida" # corrigida, com acertos/total preenchidos
+# Se respondi ou não a área. O percentual é calculado a partir de acertos/total.
+# "Estudar os erros" é um marcador à parte (coluna estudada), não afeta o cálculo.
+STATUS_FIZ = "feita"
+STATUS_NAO_FIZ = "nao_fiz"
 
 STATUS_LABEL = {
-    STATUS_NAO_FIZ: "⬜ Não fiz",
-    STATUS_PENDENTE: "🟡 A corrigir",
-    STATUS_CORRIGIDA: "✅ Corrigida",
+    STATUS_FIZ: "Fiz",
+    STATUS_NAO_FIZ: "Não fiz",
 }
 
 
@@ -95,8 +94,20 @@ def init_db():
                 total    INTEGER NOT NULL DEFAULT 0
             )
         """)
-        # status de correção por área
-        _run(conn, "ALTER TABLE desempenho_area ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'corrigida'")
+        # status (fiz/não fiz) e se os erros já foram estudados
+        _run(conn, "ALTER TABLE desempenho_area ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'feita'")
+        _run(conn, "ALTER TABLE desempenho_area ADD COLUMN IF NOT EXISTS estudada BOOLEAN DEFAULT FALSE")
+        # migra modelo antigo: 'corrigida' = fiz e estudei; 'pendente' = fiz (sem nota)
+        _run(conn, "UPDATE desempenho_area SET estudada = TRUE WHERE status = 'corrigida'")
+        _run(conn, "UPDATE desempenho_area SET status = 'feita' WHERE status IN ('corrigida', 'pendente')")
+        # recalcula os totais de todas as provas a partir das áreas feitas
+        _run(conn, """
+            UPDATE prova p SET
+                total_questoes = COALESCE((SELECT SUM(total) FROM desempenho_area d
+                                           WHERE d.prova_id = p.id AND d.status = 'feita'), 0),
+                acertos        = COALESCE((SELECT SUM(acertos) FROM desempenho_area d
+                                           WHERE d.prova_id = p.id AND d.status = 'feita'), 0)
+        """)
 
         _run(conn, """
             CREATE TABLE IF NOT EXISTS config (
@@ -112,13 +123,13 @@ def init_db():
 
 
 def _recalcular_prova(conn, prova_id):
-    """Atualiza total_questoes/acertos da prova como a soma das áreas já corrigidas."""
+    """Atualiza total_questoes/acertos da prova como a soma das áreas que fiz (com nota)."""
     _run(conn, """
         UPDATE prova SET
             total_questoes = COALESCE((SELECT SUM(total) FROM desempenho_area
-                                       WHERE prova_id = %s AND status = 'corrigida'), 0),
+                                       WHERE prova_id = %s AND status = 'feita'), 0),
             acertos        = COALESCE((SELECT SUM(acertos) FROM desempenho_area
-                                       WHERE prova_id = %s AND status = 'corrigida'), 0)
+                                       WHERE prova_id = %s AND status = 'feita'), 0)
         WHERE id = %s
     """, (prova_id, prova_id, prova_id))
 
@@ -154,8 +165,8 @@ def listar_provas():
 def inserir_prova(banca, ano, data_feita, areas):
     """Cria uma prova e suas áreas.
 
-    areas: lista de dicts {"area", "status", "acertos", "total"}.
-    Os totais da prova são derivados das áreas já corrigidas.
+    areas: lista de dicts {"area", "status", "acertos", "total", "estudada"}.
+    Os totais da prova são derivados das áreas que fiz.
     """
     with get_conn() as conn:
         cur = _run(conn,
@@ -165,9 +176,10 @@ def inserir_prova(banca, ano, data_feita, areas):
         pid = cur.fetchone()["id"]
         for a in areas:
             _run(conn,
-                 "INSERT INTO desempenho_area (prova_id, area, status, acertos, total) "
-                 "VALUES (%s, %s, %s, %s, %s)",
-                 (pid, a["area"], a["status"], a.get("acertos", 0), a.get("total", 0)))
+                 "INSERT INTO desempenho_area (prova_id, area, status, acertos, total, estudada) "
+                 "VALUES (%s, %s, %s, %s, %s, %s)",
+                 (pid, a["area"], a["status"], a.get("acertos", 0), a.get("total", 0),
+                  a.get("estudada", False)))
         _recalcular_prova(conn, pid)
     st.cache_data.clear()
     return pid
@@ -181,25 +193,24 @@ def deletar_prova(prova_id: int):
 
 # ---------- desempenho por área ----------
 
-def atualizar_areas(prova_id, areas, corrigida=None):
+def atualizar_areas(prova_id, areas):
     """Atualiza (upsert) várias áreas de uma prova numa única transação.
 
-    areas: lista de dicts {"area", "status", "acertos", "total"}.
-    corrigida: se informado, atualiza também a flag de prova corrigida.
+    areas: lista de dicts {"area", "status", "acertos", "total", "estudada"}.
     """
     with get_conn() as conn:
         for a in areas:
             cur = _run(conn,
-                "UPDATE desempenho_area SET status = %s, acertos = %s, total = %s "
+                "UPDATE desempenho_area SET status = %s, acertos = %s, total = %s, estudada = %s "
                 "WHERE prova_id = %s AND area = %s",
-                (a["status"], a.get("acertos", 0), a.get("total", 0), prova_id, a["area"]))
+                (a["status"], a.get("acertos", 0), a.get("total", 0),
+                 a.get("estudada", False), prova_id, a["area"]))
             if cur.rowcount == 0:
                 _run(conn,
-                     "INSERT INTO desempenho_area (prova_id, area, status, acertos, total) "
-                     "VALUES (%s, %s, %s, %s, %s)",
-                     (prova_id, a["area"], a["status"], a.get("acertos", 0), a.get("total", 0)))
-        if corrigida is not None:
-            _run(conn, "UPDATE prova SET corrigida = %s WHERE id = %s", (corrigida, prova_id))
+                     "INSERT INTO desempenho_area (prova_id, area, status, acertos, total, estudada) "
+                     "VALUES (%s, %s, %s, %s, %s, %s)",
+                     (prova_id, a["area"], a["status"], a.get("acertos", 0), a.get("total", 0),
+                      a.get("estudada", False)))
         _recalcular_prova(conn, prova_id)
     st.cache_data.clear()
 

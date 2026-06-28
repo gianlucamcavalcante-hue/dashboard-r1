@@ -21,12 +21,12 @@ def render(modo="dark"):
     areas_raw = db.listar_desempenho_area()
     df_areas = pd.DataFrame(areas_raw) if areas_raw else pd.DataFrame()
 
-    # uma prova é "completa" quando TODAS as áreas foram feitas e corrigidas
+    # uma prova é "completa" quando TODAS as áreas foram feitas e têm nota (acertos/total)
     completas_ids = set()
     if not df_areas.empty:
         for pid, g in df_areas.groupby("prova_id"):
-            corrigidas = set(g.loc[g["status"] == db.STATUS_CORRIGIDA, "area"])
-            if set(db.AREAS).issubset(corrigidas):
+            com_nota = set(g.loc[(g["status"] == db.STATUS_FIZ) & (g["total"] > 0), "area"])
+            if set(db.AREAS).issubset(com_nota):
                 completas_ids.add(pid)
 
     # só as provas completas entram no balanço principal (médias, melhor/pior, evolução)
@@ -72,7 +72,7 @@ def render(modo="dark"):
         c5.metric("Média USP-SP", "—")
 
     if n_incompletas:
-        st.caption(f"ℹ️ {n_incompletas} prova(s) incompleta(s) (faltam áreas feitas ou corrigidas) "
+        st.caption(f"ℹ️ {n_incompletas} prova(s) incompleta(s) (faltam áreas feitas ou sem nota) "
                    "não entram nas médias, melhor e pior prova acima.")
 
     st.divider()
@@ -99,8 +99,8 @@ def render(modo="dark"):
     col_a, col_b = st.columns(2)
     with col_a:
         st.subheader("Desempenho por grande área")
-        st.caption("Considera todas as áreas já corrigidas (mesmo de provas incompletas).")
-        corr_areas = (df_areas[df_areas["status"] == db.STATUS_CORRIGIDA]
+        st.caption("Considera todas as áreas com nota (mesmo de provas incompletas).")
+        corr_areas = (df_areas[(df_areas["status"] == db.STATUS_FIZ) & (df_areas["total"] > 0)]
                       if not df_areas.empty else pd.DataFrame())
         if not corr_areas.empty:
             df_ag = (corr_areas.groupby("area")
