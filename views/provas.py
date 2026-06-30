@@ -52,7 +52,7 @@ def _tabela_provas_html(df_f, modo):
     td = (f"padding:11px 16px;text-align:left;font-size:1.02rem;color:{p['text']};"
           f"border-bottom:1px solid {p['border']}")
 
-    cols = ["Banca", "Data", "% Acertos", "Situação", "Erros estudados", "Não fiz"]
+    cols = ["Banca", "Ano", "Quando fiz", "% Acertos", "Situação", "Erros estudados", "Não fiz"]
     head = "".join(f"<th style='{th}'>{c}</th>" for c in cols)
     linhas = ""
     for _, r in df_f.iterrows():
@@ -64,7 +64,7 @@ def _tabela_provas_html(df_f, modo):
         nao_html = (f"<span style='color:{p['muted']}'>—</span>" if nao == "—"
                     else f"<span style='color:{theme.VERMELHO}'>{nao}</span>")
         celulas = [
-            f"<b>{r['banca']}</b>", r["data_mes"], f"<b>{r['% Acertos']}</b>",
+            f"<b>{r['banca']}</b>", r["ano"], r["data_mes"], f"<b>{r['% Acertos']}</b>",
             chip, r["Estudo"], nao_html,
         ]
         tds = "".join(f"<td style='{td}'>{c}</td>" for c in celulas)
