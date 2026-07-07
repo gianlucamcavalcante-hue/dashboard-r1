@@ -152,3 +152,30 @@ def render(modo="dark"):
         fig_banca.update_layout(yaxis_range=[0, 105], **PLOT_LAYOUT)
         fig_banca.update_yaxes(gridcolor=grid_color)
         st.plotly_chart(fig_banca, use_container_width=True, key="dash_banca")
+
+    # ---------------- estudo dos erros ----------------
+    feitas = (df_areas[df_areas["status"] == db.STATUS_FIZ]
+              if not df_areas.empty else pd.DataFrame())
+    if not feitas.empty and "estudada" in feitas.columns:
+        st.divider()
+        st.subheader("📚 Estudo dos erros")
+        n_feitas = len(feitas)
+        n_estud = int(feitas["estudada"].sum())
+        frac = n_estud / n_feitas if n_feitas else 0
+        st.progress(frac, text=f"{n_estud} de {n_feitas} áreas feitas com os erros já "
+                               f"estudados ({frac * 100:.0f}%)")
+
+        by_area = (feitas.assign(estud=feitas["estudada"].astype(int))
+                   .groupby("area").agg(Feitas=("estud", "size"),
+                                        Estudadas=("estud", "sum")).reset_index())
+        by_area["Faltam"] = by_area["Feitas"] - by_area["Estudadas"]
+        by_area["ordem"] = by_area["area"].map({a: i for i, a in enumerate(db.AREAS)})
+        by_area = by_area.sort_values("ordem").drop(columns="ordem")
+        st.dataframe(
+            by_area.rename(columns={"area": "Área"}),
+            hide_index=True, use_container_width=True)
+        pendentes = by_area.loc[by_area["Faltam"] > 0, "Área"].tolist()
+        if pendentes:
+            st.caption("🟡 Ainda com erros a estudar em: " + ", ".join(pendentes))
+        else:
+            st.caption("✅ Você já estudou os erros de todas as áreas que fez. Mandou bem!")

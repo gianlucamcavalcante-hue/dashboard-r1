@@ -155,6 +155,7 @@ def render(modo="dark"):
         st.subheader("📈 Evolução por área (ao longo do tempo)")
         area_evo = st.selectbox("Área", db.AREAS, key="evo_area")
         _evolucao_area(area_evo, areas_all, df, meta, PLOT_LAYOUT, grid_color, modo)
+        _area_por_banca(area_evo, areas_all, df, meta, PLOT_LAYOUT, grid_color, modo)
 
         # ---------------- atualizar / estudo dos erros ----------------
         st.divider()
@@ -393,3 +394,33 @@ def _evolucao_area(area, areas_all, df_provas, meta, PLOT_LAYOUT, grid_color, mo
                    f"{ini}% → {fim}% ({tend}, {delta:+.1f} pts).")
     else:
         st.caption("Registre essa área em mais provas para ver a tendência ao longo do tempo.")
+
+
+def _area_por_banca(area, areas_all, df_provas, meta, PLOT_LAYOUT, grid_color, modo):
+    """Compara o desempenho numa área entre as bancas."""
+    corr = _areas_com_nota(areas_all)
+    a = corr[corr["area"] == area].copy() if not corr.empty else pd.DataFrame()
+    if a.empty:
+        return
+    m = a.merge(df_provas[["id", "banca"]], left_on="prova_id", right_on="id")
+    g = (m.groupby("banca")
+         .agg(acertos=("acertos", "sum"), total=("total", "sum"), provas=("id", "nunique"))
+         .reset_index())
+    g["pct"] = (g["acertos"] / g["total"] * 100).round(1)
+    if len(g) < 2:
+        return  # só faz sentido comparar com 2+ bancas
+
+    g = g.sort_values("pct", ascending=False)
+    g["destaque"] = g["banca"].apply(lambda b: "⭐ USP-SP" if b == "USP-SP" else "Outras")
+    st.markdown(f"**{area} — comparação por banca**")
+    fig = px.bar(
+        g, x="banca", y="pct", color="destaque",
+        color_discrete_map={"⭐ USP-SP": theme.AMARELO, "Outras": theme.AZUL},
+        labels={"banca": "Banca", "pct": f"% em {area}"}, text="pct",
+        hover_data={"provas": True})
+    fig.add_hline(y=meta, line_dash="dash", line_color=theme.AMARELO,
+                  annotation_text=f"Meta {meta}%")
+    fig.update_traces(texttemplate="%{text}%", textposition="outside")
+    fig.update_layout(yaxis_range=[0, 105], showlegend=False, **PLOT_LAYOUT)
+    fig.update_yaxes(gridcolor=grid_color)
+    st.plotly_chart(fig, use_container_width=True, key=f"banca_area_{area}")
