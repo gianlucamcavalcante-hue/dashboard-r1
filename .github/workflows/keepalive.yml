@@ -2,7 +2,7 @@ name: Keep Supabase Alive
 
 on:
   schedule:
-    - cron: "0 12 * * 1"   # toda segunda-feira ao meio-dia (UTC)
+    - cron: "0 12 * * *"   # todo dia ao meio-dia (UTC) — evita a pausa por inatividade
   workflow_dispatch:         # permite rodar manualmente pelo botão no GitHub
 
 jobs:
