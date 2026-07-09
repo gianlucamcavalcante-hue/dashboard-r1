@@ -174,7 +174,7 @@ def render(modo="dark"):
         st.dataframe(
             by_area.rename(columns={"area": "Área"}),
             hide_index=True, use_container_width=True)
-        pendentes = by_area.loc[by_area["Faltam"] > 0, "Área"].tolist()
+        pendentes = by_area.loc[by_area["Faltam"] > 0, "area"].tolist()
         if pendentes:
             st.caption("🟡 Ainda com erros a estudar em: " + ", ".join(pendentes))
         else:

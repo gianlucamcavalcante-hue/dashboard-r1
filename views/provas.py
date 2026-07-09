@@ -404,7 +404,8 @@ def _area_por_banca(area, areas_all, df_provas, meta, PLOT_LAYOUT, grid_color, m
         return
     m = a.merge(df_provas[["id", "banca"]], left_on="prova_id", right_on="id")
     g = (m.groupby("banca")
-         .agg(acertos=("acertos", "sum"), total=("total", "sum"), provas=("id", "nunique"))
+         .agg(acertos=("acertos", "sum"), total=("total", "sum"),
+              provas=("prova_id", "nunique"))
          .reset_index())
     g["pct"] = (g["acertos"] / g["total"] * 100).round(1)
     if len(g) < 2:
