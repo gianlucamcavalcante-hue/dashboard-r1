@@ -10,7 +10,8 @@ STATUS_OPCOES = [db.STATUS_FIZ, db.STATUS_NAO_FIZ]
 MESES = ["", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
          "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
 
-_CAT_COR = {"completa": theme.VERDE, "parcial": theme.AMARELO, "sem": theme.ROXO}
+_CAT_COR = {"concluida": theme.VERDE, "revisar": theme.AMARELO,
+            "parcial": theme.AMARELO, "sem": theme.ROXO}
 
 
 def _mes_ano(valor):
@@ -32,15 +33,20 @@ def _resumo(ap: pd.DataFrame):
     com_nota = feitas[feitas["total"] > 0]
     nao_fiz = ap.loc[ap["status"] == db.STATUS_NAO_FIZ, "area"].tolist()
     n_com_nota = len(com_nota)
+    n_feitas = len(feitas)
     n_estudadas = int(feitas["estudada"].sum()) if "estudada" in feitas.columns else 0
     if n_com_nota == 0:
         cat, label = "sem", "⬜ Sem notas"
-    elif n_com_nota == n_areas:
-        cat, label = "completa", "✅ Completa"
+    elif n_com_nota < n_areas:
+        cat, label = "parcial", f"🟡 Parcial ({n_com_nota}/{n_areas} áreas)"
+    elif n_estudadas >= n_feitas:
+        # todas as áreas com nota E todos os erros estudados
+        cat, label = "concluida", "✅ Concluída"
     else:
-        cat, label = "parcial", f"🟡 Parcial ({n_com_nota}/{n_areas})"
+        # notas completas, mas ainda falta estudar erros
+        cat, label = "revisar", f"🟡 Falta estudar ({n_estudadas}/{n_feitas})"
     return {"categoria": cat, "label": label, "nao_fiz": nao_fiz,
-            "n_com_nota": n_com_nota, "n_feitas": len(feitas), "n_estudadas": n_estudadas}
+            "n_com_nota": n_com_nota, "n_feitas": n_feitas, "n_estudadas": n_estudadas}
 
 
 def _tabela_provas_html(df_f, modo):
@@ -106,7 +112,7 @@ def render(modo="dark"):
             if r["total_questoes"] <= 0:
                 return "—"
             pct = round(r["acertos"] / r["total_questoes"] * 100, 1)
-            sufixo = " (parcial)" if r["categoria"] != "completa" else ""
+            sufixo = " (parcial)" if r["categoria"] in ("parcial", "sem") else ""
             return f"{pct}%{sufixo}"
 
         df["% Acertos"] = df.apply(fmt_pct, axis=1)
@@ -117,7 +123,8 @@ def render(modo="dark"):
         bancas = ["Todas"] + sorted(df["banca"].unique().tolist())
         banca_sel = col_f1.selectbox("Banca", bancas)
         sit_sel = col_f2.selectbox(
-            "Situação", ["Todas", "✅ Completa", "🟡 Parcial", "⬜ Sem notas"])
+            "Situação", ["Todas", "✅ Concluída", "🟡 Falta estudar",
+                         "🟡 Parcial", "⬜ Sem notas"])
         anos = ["Todos"] + sorted(df["ano"].unique().tolist(), reverse=True)
         ano_sel = col_f3.selectbox("Ano", anos)
 
@@ -126,7 +133,8 @@ def render(modo="dark"):
             df_f = df_f[df_f["banca"] == banca_sel]
         if ano_sel != "Todos":
             df_f = df_f[df_f["ano"] == ano_sel]
-        _map_cat = {"✅ Completa": "completa", "🟡 Parcial": "parcial", "⬜ Sem notas": "sem"}
+        _map_cat = {"✅ Concluída": "concluida", "🟡 Falta estudar": "revisar",
+                    "🟡 Parcial": "parcial", "⬜ Sem notas": "sem"}
         if sit_sel in _map_cat:
             df_f = df_f[df_f["categoria"] == _map_cat[sit_sel]]
 
