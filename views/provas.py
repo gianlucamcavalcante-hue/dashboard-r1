@@ -357,11 +357,10 @@ def _desempenho_prova(pid, areas_all, meta, PLOT_LAYOUT, grid_color, modo):
     else:
         st.info("Nenhuma área desta prova tem nota ainda.")
 
-    st.dataframe(
-        ap[["area", "Status", "acertos", "total", "%", "Erros"]].rename(columns={
-            "area": "Área", "acertos": "Acertos", "total": "Total"}),
-        hide_index=True, use_container_width=True,
-        column_config={"%": st.column_config.NumberColumn("%", format="%.1f%%")})
+    tab = ap[["area", "Status", "acertos", "total", "%", "Erros"]].copy()
+    tab["%"] = tab["%"].apply(lambda v: f"{v}%" if pd.notna(v) else "—")
+    theme.tabela_html(
+        tab.rename(columns={"area": "Área", "acertos": "Acertos", "total": "Total"}), modo)
 
     nao = ap.loc[ap["status"] == db.STATUS_NAO_FIZ, "area"].tolist()
     if nao:

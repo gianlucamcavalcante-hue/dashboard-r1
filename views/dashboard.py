@@ -134,10 +134,11 @@ def render(modo="dark"):
         st.subheader("Desempenho por banca")
         df_banca = (
             df_comp.groupby("banca")
-            .apply(lambda x: pd.Series({"media_pct": x["pct"].mean().round(1),
-                                        "provas": len(x)}))
-            .reset_index().sort_values("media_pct", ascending=False)
+            .agg(media_pct=("pct", "mean"), provas=("pct", "size"))
+            .reset_index()
         )
+        df_banca["media_pct"] = df_banca["media_pct"].round(1)
+        df_banca = df_banca.sort_values("media_pct", ascending=False)
         df_banca["destaque"] = df_banca["banca"].apply(
             lambda b: "⭐ USP-SP" if b == "USP-SP" else "Outras")
         fig_banca = px.bar(
@@ -171,9 +172,9 @@ def render(modo="dark"):
         by_area["Faltam"] = by_area["Feitas"] - by_area["Estudadas"]
         by_area["ordem"] = by_area["area"].map({a: i for i, a in enumerate(db.AREAS)})
         by_area = by_area.sort_values("ordem").drop(columns="ordem")
-        st.dataframe(
-            by_area.rename(columns={"area": "Área"}),
-            hide_index=True, use_container_width=True)
+        theme.tabela_html(
+            by_area.rename(columns={"area": "Área"})[["Área", "Feitas", "Estudadas", "Faltam"]],
+            modo)
         pendentes = by_area.loc[by_area["Faltam"] > 0, "area"].tolist()
         if pendentes:
             st.caption("🟡 Ainda com erros a estudar em: " + ", ".join(pendentes))

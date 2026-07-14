@@ -134,6 +134,28 @@ def plot_layout(modo="dark"):
     return layout, p["grid"]
 
 
+def tabela_html(df, modo="dark"):
+    """Renderiza um DataFrame como tabela HTML estilizada (sem pyarrow/st.dataframe)."""
+    import streamlit as _st
+    p = _PALETAS.get(modo, _PALETAS["dark"])
+    th = (f"padding:9px 14px;text-align:left;font-size:.82rem;font-weight:700;"
+          f"text-transform:uppercase;letter-spacing:.5px;color:{p['muted']};"
+          f"border-bottom:2px solid {p['border']}")
+    td = (f"padding:9px 14px;text-align:left;font-size:1rem;color:{p['text']};"
+          f"border-bottom:1px solid {p['border']}")
+    head = "".join(f"<th style='{th}'>{c}</th>" for c in df.columns)
+    linhas = ""
+    for _, r in df.iterrows():
+        tds = "".join(f"<td style='{td}'>{'' if v is None else v}</td>" for v in r.tolist())
+        linhas += f"<tr>{tds}</tr>"
+    _st.markdown(
+        f"<div style='overflow-x:auto;border:1px solid {p['border']};border-radius:12px'>"
+        f"<table style='width:100%;border-collapse:collapse'>"
+        f"<thead><tr>{head}</tr></thead><tbody>{linhas}</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
+
+
 def chip(texto, cor):
     """Devolve HTML de um 'chip' colorido."""
     return (
