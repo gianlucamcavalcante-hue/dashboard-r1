@@ -1,3 +1,4 @@
+import time
 import psycopg2
 import psycopg2.extras
 import psycopg2.pool
@@ -21,21 +22,54 @@ def _get_url():
 # Pool persistente — reutiliza conexões entre reruns do Streamlit
 _pool: Optional[psycopg2.pool.SimpleConnectionPool] = None
 
+
+def _new_pool():
+    return psycopg2.pool.SimpleConnectionPool(
+        1, 5,  # min 1, max 5 conexões simultâneas
+        _get_url(),
+        cursor_factory=psycopg2.extras.RealDictCursor,
+        connect_timeout=10,          # não trava esperando um banco frio
+        keepalives=1, keepalives_idle=30,
+        keepalives_interval=10, keepalives_count=3,
+    )
+
+
+def _reset_pool():
+    global _pool
+    try:
+        if _pool is not None:
+            _pool.closeall()
+    except Exception:
+        pass
+    _pool = None
+
+
 def _get_pool():
+    """Cria/retorna o pool, tentando algumas vezes (banco pode estar 'acordando')."""
     global _pool
     if _pool is None or _pool.closed:
-        _pool = psycopg2.pool.SimpleConnectionPool(
-            1, 5,  # min 1, max 5 conexões simultâneas
-            _get_url(),
-            cursor_factory=psycopg2.extras.RealDictCursor,
-        )
+        ultimo = None
+        for tentativa in range(3):
+            try:
+                _pool = _new_pool()
+                return _pool
+            except Exception as e:
+                ultimo = e
+                time.sleep(1.5 * (tentativa + 1))
+        raise ultimo
     return _pool
 
 
 @contextmanager
 def get_conn():
-    pool = _get_pool()
-    conn = pool.getconn()
+    try:
+        pool = _get_pool()
+        conn = pool.getconn()
+    except Exception:
+        # conexão do pool pode ter expirado (app dormiu) — recria e tenta 1x
+        _reset_pool()
+        pool = _get_pool()
+        conn = pool.getconn()
     try:
         yield conn
         conn.commit()
@@ -43,7 +77,10 @@ def get_conn():
         conn.rollback()
         raise
     finally:
-        pool.putconn(conn)  # devolve ao pool (não fecha)
+        try:
+            pool.putconn(conn)  # devolve ao pool (não fecha)
+        except Exception:
+            pass
 
 
 def _run(conn, sql, params=()):
