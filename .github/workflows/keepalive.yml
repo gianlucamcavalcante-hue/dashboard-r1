@@ -1,12 +1,26 @@
-name: Keep Supabase Alive
+name: Keep Alive (app + banco)
 
 on:
   schedule:
-    - cron: "0 12 * * *"   # todo dia ao meio-dia (UTC) — evita a pausa por inatividade
+    - cron: "0 */4 * * *"   # a cada 4 horas — mantém o app acordado e o banco ativo
   workflow_dispatch:         # permite rodar manualmente pelo botão no GitHub
 
 jobs:
-  ping:
+  # Mantém o app do Streamlit acordado (não precisa de segredo)
+  ping-app:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Visita o app para acordá-lo
+        run: |
+          for i in 1 2 3; do
+            echo "Tentativa $i de acordar o app..."
+            curl -s -o /dev/null -w "HTTP %{http_code}\n" -L --max-time 90 \
+              https://gianluca-r1.streamlit.app/ || true
+            sleep 20
+          done
+
+  # Mantém o banco Supabase ativo (precisa do segredo DATABASE_URL no GitHub)
+  ping-banco:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
