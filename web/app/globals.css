@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Tema CLARO */
+:root {
+  color-scheme: light;
+  --bg: #f5f6fb;
+  --card: #ffffff;
+  --card2: #f1f3fa;
+  --border: #e1e4f0;
+  --text: #1a1d29;
+  --muted: #5f6577;
+  --faint: #9aa0b4;
+  --warn: #92400e;
+}
+
+/* Tema ESCURO */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1117;
+  --card: #171a26;
+  --card2: #1e2232;
+  --border: #2a2f42;
+  --text: #e8eaf0;
+  --muted: #9ba0b8;
+  --faint: #6b7088;
+  --warn: #fcd34d;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* campos de número sem as setinhas (ficam mais limpos no celular) */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+.recharts-wrapper:focus,
+.recharts-surface:focus,
+.recharts-wrapper *:focus {
+  outline: none;
+}
