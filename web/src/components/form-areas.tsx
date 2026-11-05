@@ -126,7 +126,7 @@ export function FormAreas({
                     type="checkbox"
                     checked={l.estudada}
                     onChange={(e) => muda(i, { estudada: e.target.checked })}
-                    className="h-4 w-4 accent-[#6366f1]"
+                    className="h-4 w-4 accent-[#3a6aa5]"
                   />
                   📚 estudei
                 </label>

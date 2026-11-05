@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { AREAS, validarPlano, type PlanoFoco } from "@/lib/calc";
 import { exigirSessao } from "./sessao";
 import {
   atualizarAreasDb,
@@ -8,6 +9,7 @@ import {
   inserirProvaDb,
   salvarMetaDb,
   salvarDataProvaDb,
+  salvarPlanoFocoDb,
   validarAreas,
   type AreaEntrada,
 } from "./db";
@@ -82,4 +84,16 @@ export async function salvarDataProva(data: string): Promise<Resultado> {
   const d = String(data ?? "");
   if (d !== "" && !/^\d{4}-\d{2}-\d{2}$/.test(d)) return { ok: false, erro: "Data inválida." };
   return executar(() => salvarDataProvaDb(d));
+}
+
+/** Metas (%) e questões por área da prova-alvo. */
+export async function salvarPlanoFoco(plano: PlanoFoco): Promise<Resultado> {
+  const limpo: PlanoFoco = { metas: {}, questoes: {} };
+  for (const a of AREAS) {
+    limpo.metas[a] = Number(plano?.metas?.[a]);
+    limpo.questoes[a] = Number(plano?.questoes?.[a]);
+  }
+  const erro = validarPlano(limpo);
+  if (erro) return { ok: false, erro };
+  return executar(() => salvarPlanoFocoDb(JSON.stringify(limpo)));
 }

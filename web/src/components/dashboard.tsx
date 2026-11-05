@@ -56,7 +56,7 @@ export default function Dashboard({ provas, areas, meta }: { provas: Prova[]; ar
           corDetalhe={corFaixa(faixa(k.media, meta))}
         />
         <Metrica rotulo="Melhor prova" valor={fmtPct(k.melhor.pct)} detalhe={`${k.melhor.banca} ${k.melhor.ano}`} />
-        <Metrica rotulo="Pior prova" valor={fmtPct(k.pior.pct)} detalhe={`${k.pior.banca} ${k.pior.ano}`} corDetalhe="text-neg" />
+        <Metrica rotulo="Pior prova" valor={fmtPct(k.pior.pct)} detalhe={`${k.pior.banca} ${k.pior.ano}`} />
         <div className="col-span-2 lg:col-span-1">
           <Metrica
             rotulo={`Média ${BANCA_FOCO}`}

@@ -377,16 +377,72 @@ export function nomeProva(p: Prova): string {
 /** Quantas provas mais recentes contam como "fase atual". */
 export const N_RECENTES = 3;
 
+/**
+ * Plano para a prova-alvo: meta (%) e número de questões de cada área.
+ * A USP-SP deste ano terá 100 questões; o padrão divide como nas provas antigas (20/20/20/10/10/20).
+ */
+export interface PlanoFoco {
+  metas: Record<string, number>;
+  questoes: Record<string, number>;
+}
+
+export const QUESTOES_PADRAO: Record<string, number> = {
+  "Clínica Médica": 20,
+  Cirurgia: 20,
+  Pediatria: 20,
+  Ginecologia: 10,
+  Obstetrícia: 10,
+  Preventiva: 20,
+};
+
+export function planoPadrao(meta: number): PlanoFoco {
+  return {
+    metas: Object.fromEntries(AREAS.map((a) => [a, meta])),
+    questoes: { ...QUESTOES_PADRAO },
+  };
+}
+
+/** Confere um plano vindo do banco (ou de um formulário); completa o que faltar com o padrão. */
+export function normalizarPlano(bruto: unknown, meta: number): PlanoFoco {
+  const base = planoPadrao(meta);
+  const obj = (bruto && typeof bruto === "object" ? bruto : {}) as Partial<PlanoFoco>;
+  const ok = (v: unknown, min: number, max: number) =>
+    typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
+  for (const a of AREAS) {
+    const m = obj.metas?.[a];
+    const q = obj.questoes?.[a];
+    if (ok(m, 30, 100)) base.metas[a] = m as number;
+    if (ok(q, 0, 80)) base.questoes[a] = q as number;
+  }
+  return base;
+}
+
+/** Erro de validação do plano (ou null). */
+export function validarPlano(p: PlanoFoco): string | null {
+  for (const a of AREAS) {
+    const m = p.metas[a];
+    const q = p.questoes[a];
+    if (typeof m !== "number" || !Number.isInteger(m) || m < 30 || m > 100) return `${a}: a meta vai de 30% a 100%.`;
+    if (typeof q !== "number" || !Number.isInteger(q) || q < 0 || q > 80) return `${a}: questões de 0 a 80.`;
+  }
+  const total = AREAS.reduce((s, a) => s + p.questoes[a]!, 0);
+  if (total < 1 || total > 200) return "O total de questões da prova deve ficar entre 1 e 200.";
+  return null;
+}
+
 export interface DiagArea {
   area: string;
+  meta: number;
+  /** questões dessa área na prova-alvo */
+  questoes: number;
   pctGeral: number;
   pctRecente: number;
   /** pontos de diferença: recentes − anteriores (null se não há provas anteriores) */
   tendencia: number | null;
-  /** quantas questões dessa área caem por prova (média das recentes) */
-  questoes: number;
-  /** quantas questões a mais por prova para chegar na meta */
+  /** questões a mais nessa área para chegar na meta dela (0 se já chegou) */
   ganho: number;
+  /** questões acima da meta (0 se ainda não chegou) */
+  folga: number;
   nProvas: number;
 }
 
@@ -395,12 +451,19 @@ export interface Diagnostico {
   nCompletas: number;
   media: number | null;
   ultima: ProvaComPct | null;
+  primeira: ProvaComPct | null;
+  melhor: ProvaComPct | null;
   pctRecente: number | null;
   /** pontos: média das recentes − média das anteriores */
   tendencia: number | null;
-  questoesProva: number;
-  /** questões a mais por prova para bater a meta (0 se já bateu) */
-  faltam: number;
+  /** prova-alvo */
+  totalQuestoes: number;
+  metaQuestoes: number;
+  metaPct: number;
+  /** quantas questões você faria hoje na prova-alvo (fase atual, área por área) */
+  atualQuestoes: number | null;
+  /** idem, com as notas da última prova */
+  ultimaQuestoes: number | null;
   areas: DiagArea[]; // da maior prioridade para a menor
   pendentes: { prova: Prova; areas: string[] }[];
   anosFaltando: number[];
@@ -408,7 +471,12 @@ export interface Diagnostico {
 
 const soma = (xs: number[]) => xs.reduce((s, x) => s + x, 0);
 
-export function diagnostico(provas: Prova[], areas: Area[], meta: number, banca = BANCA_FOCO): Diagnostico | null {
+export function diagnostico(
+  provas: Prova[],
+  areas: Area[],
+  plano: PlanoFoco,
+  banca = BANCA_FOCO,
+): Diagnostico | null {
   const doFoco = provas
     .filter((p) => p.banca === banca)
     .sort((a, b) => dataMs(a.data_feita) - dataMs(b.data_feita) || a.id - b.id);
@@ -424,8 +492,11 @@ export function diagnostico(provas: Prova[], areas: Area[], meta: number, banca 
   const anteriores = comp.slice(0, -N_RECENTES);
   const pctRecente = recentes.length ? pct(soma(recentes.map((p) => p.acertos)), soma(recentes.map((p) => p.total_questoes))) : null;
   const pctAnt = anteriores.length ? pct(soma(anteriores.map((p) => p.acertos)), soma(anteriores.map((p) => p.total_questoes))) : null;
-  const questoesProva = recentes.length ? Math.round(soma(recentes.map((p) => p.total_questoes)) / recentes.length) : 0;
-  const faltam = pctRecente === null ? 0 : Math.max(0, ((meta - pctRecente) / 100) * questoesProva);
+
+  // prova-alvo
+  const totalQuestoes = soma(AREAS.map((a) => plano.questoes[a] ?? 0));
+  const metaQuestoes = soma(AREAS.map((a) => ((plano.metas[a] ?? 0) / 100) * (plano.questoes[a] ?? 0)));
+  const metaPct = totalQuestoes ? (metaQuestoes / totalQuestoes) * 100 : 0;
 
   // por área: a ordem das provas define o que é "recente"
   const ordem = new Map(doFoco.map((p, i) => [p.id, i]));
@@ -439,18 +510,38 @@ export function diagnostico(provas: Prova[], areas: Area[], meta: number, banca 
     const ant = linhas.slice(0, -N_RECENTES);
     const pRec = pct(soma(rec.map((a) => a.acertos)), soma(rec.map((a) => a.total)))!;
     const pAnt = ant.length ? pct(soma(ant.map((a) => a.acertos)), soma(ant.map((a) => a.total))) : null;
-    const questoes = soma(rec.map((a) => a.total)) / rec.length;
+    const meta = plano.metas[ar] ?? 70;
+    const q = plano.questoes[ar] ?? 0;
     diagAreas.push({
       area: ar,
+      meta,
+      questoes: q,
       pctGeral: pct(soma(linhas.map((a) => a.acertos)), soma(linhas.map((a) => a.total)))!,
       pctRecente: pRec,
       tendencia: pAnt === null ? null : arred1(pRec - pAnt),
-      questoes: arred1(questoes),
-      ganho: arred1(Math.max(0, ((meta - pRec) / 100) * questoes)),
+      ganho: arred1(Math.max(0, ((meta - pRec) / 100) * q)),
+      folga: arred1(Math.max(0, ((pRec - meta) / 100) * q)),
       nProvas: linhas.length,
     });
   }
   diagAreas.sort((a, b) => b.ganho - a.ganho || a.pctRecente - b.pctRecente);
+
+  // "quantas questões você faria" na prova-alvo, área por área
+  const naProvaAlvo = (pcts: Map<string, number>) => {
+    if (AREAS.some((a) => (plano.questoes[a] ?? 0) > 0 && !pcts.has(a))) return null;
+    return soma(AREAS.map((a) => ((pcts.get(a) ?? 0) / 100) * (plano.questoes[a] ?? 0)));
+  };
+  const atualQuestoes = naProvaAlvo(new Map(diagAreas.map((d) => [d.area, d.pctRecente])));
+  const ultima = comp[comp.length - 1] ?? null;
+  const ultimaQuestoes = ultima
+    ? naProvaAlvo(
+        new Map(
+          areasFoco
+            .filter((a) => a.prova_id === ultima.id && temNota(a))
+            .map((a) => [a.area, (a.acertos / a.total) * 100] as const),
+        ),
+      )
+    : null;
 
   // erros ainda não estudados, da prova mais recente para a mais antiga
   const pendentes = [...doFoco]
@@ -468,15 +559,23 @@ export function diagnostico(provas: Prova[], areas: Area[], meta: number, banca 
   const maxAno = Math.max(...anos);
   for (let a = minAno + 1; a < maxAno; a++) if (!anos.has(a)) anosFaltando.push(a);
 
+  let melhor: ProvaComPct | null = null;
+  for (const p of comp) if (!melhor || p.pct > melhor.pct) melhor = p;
+
   return {
     nProvas: doFoco.length,
     nCompletas: comp.length,
     media: comp.length ? soma(comp.map((p) => p.pct)) / comp.length : null,
-    ultima: comp[comp.length - 1] ?? null,
+    ultima,
+    primeira: comp[0] ?? null,
+    melhor,
     pctRecente,
     tendencia: pctRecente !== null && pctAnt !== null ? arred1(pctRecente - pctAnt) : null,
-    questoesProva,
-    faltam: arred1(faltam),
+    totalQuestoes,
+    metaQuestoes: arred1(metaQuestoes),
+    metaPct: arred1(metaPct),
+    atualQuestoes: atualQuestoes === null ? null : arred1(atualQuestoes),
+    ultimaQuestoes: ultimaQuestoes === null ? null : arred1(ultimaQuestoes),
     areas: diagAreas,
     pendentes,
     anosFaltando,

@@ -6,7 +6,7 @@ import Dashboard from "./dashboard";
 import Provas from "./provas";
 import DiagnosticoFoco from "./foco";
 import { salvarMeta } from "@/server/acoes";
-import { BANCA_FOCO, type Area, type Prova } from "@/lib/calc";
+import { BANCA_FOCO, type Area, type PlanoFoco, type Prova } from "@/lib/calc";
 
 type Aba = "dashboard" | "provas";
 type Foco = "usp" | "todas";
@@ -15,18 +15,23 @@ export default function Painel({
   provas,
   areas,
   meta,
+  plano,
+  planoSalvo,
   dataProva,
   comSenha,
 }: {
   provas: Prova[];
   areas: Area[];
   meta: number;
+  plano: PlanoFoco;
+  planoSalvo: boolean;
   dataProva: string | null;
   comSenha: boolean;
 }) {
   const temaEstado = useTemaEstado();
   const [aba, setAba] = useState<Aba>("dashboard");
   const [foco, setFoco] = useState<Foco>("usp");
+  const [planoAberto, setPlanoAberto] = useState(false);
 
   // lembra a última aba e o modo escolhidos neste aparelho
   useEffect(() => {
@@ -64,7 +69,19 @@ export default function Painel({
             <span aria-hidden>🩺 </span>Dashboard R1
           </h1>
           <div className="flex items-center gap-2">
-            <ControleMeta meta={meta} />
+            {foco === "usp" ? (
+              <button
+                onClick={() => {
+                  trocarAba("dashboard");
+                  setPlanoAberto(true);
+                }}
+                className="rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium hover:bg-card2"
+              >
+                🎯 Metas por área
+              </button>
+            ) : (
+              <ControleMeta meta={meta} />
+            )}
             <button
               onClick={() => temaEstado.setTema(temaEstado.tema === "dark" ? "light" : "dark")}
               className="rounded-lg border border-border bg-card px-3 py-2 text-sm hover:bg-card2"
@@ -135,7 +152,15 @@ export default function Painel({
         <main className="mt-6">
           {aba === "dashboard" ? (
             foco === "usp" ? (
-              <DiagnosticoFoco provas={provas} areas={areas} meta={meta} dataProva={dataProva} />
+              <DiagnosticoFoco
+                provas={provas}
+                areas={areas}
+                plano={plano}
+                planoSalvo={planoSalvo}
+                dataProva={dataProva}
+                planoAberto={planoAberto}
+                setPlanoAberto={setPlanoAberto}
+              />
             ) : (
               <Dashboard provas={provas} areas={areas} meta={meta} />
             )
@@ -199,7 +224,7 @@ function ControleMeta({ meta }: { meta: number }) {
             step={1}
             value={valor}
             onChange={(e) => setValor(Number(e.target.value))}
-            className="mt-3 w-full accent-[#6366f1]"
+            className="mt-3 w-full accent-[#3a6aa5]"
             aria-label="Meta de acertos"
           />
           <p className="mt-1 text-xs text-muted">Recalibra as cores em todo o painel.</p>

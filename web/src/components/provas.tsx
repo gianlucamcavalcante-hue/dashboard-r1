@@ -11,7 +11,7 @@ import {
   Mensagem,
   Metrica,
   Recolhivel,
-  ROXO,
+  MARINHO,
   Secao,
   Selecao,
   Tabela,
@@ -46,7 +46,7 @@ import {
   type Status,
 } from "@/lib/calc";
 
-const COR_CAT: Record<Categoria, string> = { concluida: VERDE, revisar: AMARELO, parcial: AMARELO, sem: ROXO };
+const COR_CAT: Record<Categoria, string> = { concluida: VERDE, revisar: AMARELO, parcial: AMARELO, sem: "#64748b" };
 const ICONE_CAT: Record<Categoria, string> = { concluida: "✅ ", revisar: "🟡 ", parcial: "🟡 ", sem: "⬜ " };
 
 type Msg = { tipo: "ok" | "erro"; texto: string } | null;

@@ -140,3 +140,19 @@ export async function salvarDataProvaDb(data: string): Promise<void> {
     INSERT INTO config (chave, valor) VALUES ('data_prova_foco', ${data})
     ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor`;
 }
+
+/** Metas e questões por área para a prova-alvo (JSON na tabela config), ou null se nunca salvo. */
+export async function lerPlanoFoco(): Promise<unknown> {
+  const rows = await sql()`SELECT valor FROM config WHERE chave = 'plano_foco'`;
+  try {
+    return rows[0]?.valor ? JSON.parse(String(rows[0].valor)) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function salvarPlanoFocoDb(json: string): Promise<void> {
+  await sql()`
+    INSERT INTO config (chave, valor) VALUES ('plano_foco', ${json})
+    ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor`;
+}

@@ -109,10 +109,10 @@ describe("contas do painel", () => {
   });
 });
 
-import { diagnostico, diasAte, filtrarBanca } from "../calc";
+import { diagnostico, diasAte, filtrarBanca, normalizarPlano, planoPadrao, validarPlano } from "../calc";
 
 describe("diagnóstico USP-SP", () => {
-  // 4 provas USP-SP completas: a área Cirurgia vai mal e não melhora; Pediatria melhora
+  // 4 provas USP-SP completas: Cirurgia vai mal e não melhora; Pediatria melhora
   const ps: Prova[] = [1, 2, 3, 4].map((i) => ({
     id: 100 + i,
     banca: "USP-SP",
@@ -129,7 +129,6 @@ describe("diagnóstico USP-SP", () => {
       return { id: idArea++, prova_id: p.id, area, acertos, total, status: "feita", estudada: k < 3 };
     }),
   );
-  // totais da prova = soma das áreas (como o banco faz)
   for (const p of ps) {
     const ap = as.filter((a) => a.prova_id === p.id);
     p.total_questoes = ap.reduce((s, a) => s + a.total, 0);
@@ -137,42 +136,69 @@ describe("diagnóstico USP-SP", () => {
   }
   const outra: Prova = { id: 999, banca: "UNESP", ano: 2019, data_feita: "2026-05-01", total_questoes: 10, acertos: 10 };
 
-  const d = diagnostico([...ps, outra], as, 70)!;
+  const plano = planoPadrao(70);
+  const d = diagnostico([...ps, outra], as, plano)!;
 
   it("ignora outras bancas", () => {
     expect(d.nProvas).toBe(4);
     expect(filtrarBanca([...ps, outra], as, "USP-SP").provas).toHaveLength(4);
   });
 
-  it("Cirurgia é a prioridade: mais questões a ganhar", () => {
+  it("prova-alvo de 100 questões", () => {
+    expect(d.totalQuestoes).toBe(100);
+    expect(d.metaQuestoes).toBe(70);
+    expect(d.metaPct).toBe(70);
+  });
+
+  it("Cirurgia é a prioridade, pesada pelas 20 questões da prova de 100", () => {
     expect(d.areas[0]!.area).toBe("Cirurgia");
     expect(d.areas[0]!.pctRecente).toBe(41.7);
-    expect(d.areas[0]!.questoes).toBe(24);
-    expect(d.areas[0]!.ganho).toBe(6.8); // (70 − 41,7)% de 24
+    expect(d.areas[0]!.ganho).toBe(5.7); // (70 − 41,7)% de 20
     expect(d.areas[0]!.tendencia).toBe(0);
   });
 
   it("Pediatria mostra a melhora recente", () => {
     const ped = d.areas.find((a) => a.area === "Pediatria")!;
-    expect(ped.pctRecente).toBe(69.4); // (12+18+20)/72
-    expect(ped.tendencia).toBe(27.7); // 69,4 − 41,7
+    expect(ped.pctRecente).toBe(69.4);
+    expect(ped.tendencia).toBe(27.7);
   });
 
-  it("área na meta não pede questões a mais", () => {
-    expect(d.areas.find((a) => a.area === "Preventiva")!.ganho).toBe(0);
+  it("meta por área muda a prioridade", () => {
+    const p2 = planoPadrao(70);
+    p2.metas["Obstetrícia"] = 95;
+    p2.metas["Cirurgia"] = 45;
+    const d2 = diagnostico(ps, as, p2)!;
+    expect(d2.areas[0]!.area).toBe("Obstetrícia"); // (95 − 66,7)% de 10 = 2,8 > Cirurgia (0,7)
+    expect(d2.areas.find((a) => a.area === "Cirurgia")!.ganho).toBe(0.7);
   });
 
-  it("pendências de estudo e anos que faltam", () => {
-    expect(d.pendentes).toHaveLength(1);
+  it("área na meta tem folga e não pede questões", () => {
+    const prev = d.areas.find((a) => a.area === "Preventiva")!;
+    expect(prev.ganho).toBe(0);
+    expect(prev.folga).toBeGreaterThanOrEqual(0);
+  });
+
+  it("questões que você faria na prova de 100", () => {
+    expect(d.atualQuestoes).not.toBeNull();
+    expect(d.ultimaQuestoes).not.toBeNull();
+    expect(d.ultimaQuestoes!).toBeGreaterThan(d.atualQuestoes! - 1);
+  });
+
+  it("primeira, melhor, pendências e anos que faltam", () => {
+    expect(d.primeira!.id).toBe(101);
+    expect(d.ultima!.id).toBe(104);
+    expect(d.melhor!.id).toBe(104);
     expect(d.pendentes[0]!.prova.id).toBe(104);
-    expect(d.pendentes[0]!.areas).toHaveLength(6);
     expect(d.anosFaltando).toEqual([2021]);
   });
 
-  it("última prova e quanto falta no geral", () => {
-    expect(d.ultima!.id).toBe(104);
-    expect(d.questoesProva).toBe(120);
-    expect(d.faltam).toBeGreaterThan(0);
+  it("plano: completa o que falta e valida", () => {
+    const n = normalizarPlano({ metas: { Cirurgia: 50, Pediatria: 999 } }, 75);
+    expect(n.metas["Cirurgia"]).toBe(50);
+    expect(n.metas["Pediatria"]).toBe(75);
+    expect(n.questoes["Ginecologia"]).toBe(10);
+    expect(validarPlano(n)).toBeNull();
+    expect(validarPlano({ ...n, metas: { ...n.metas, Cirurgia: 20 } })).toMatch(/Cirurgia/);
   });
 
   it("contagem de dias", () => {

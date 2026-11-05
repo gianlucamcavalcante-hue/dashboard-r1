@@ -1,4 +1,5 @@
-import { listarAreas, listarProvas, lerDataProva, lerMeta } from "@/server/db";
+import { listarAreas, listarProvas, lerDataProva, lerMeta, lerPlanoFoco } from "@/server/db";
+import { normalizarPlano } from "@/lib/calc";
 import { senhaConfigurada } from "@/server/auth";
 import Painel from "@/components/painel";
 
@@ -6,11 +7,23 @@ import Painel from "@/components/painel";
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const [provas, areas, meta, dataProva] = await Promise.all([
+  const [provas, areas, meta, dataProva, planoBruto] = await Promise.all([
     listarProvas(),
     listarAreas(),
     lerMeta(),
     lerDataProva(),
+    lerPlanoFoco(),
   ]);
-  return <Painel provas={provas} areas={areas} meta={meta} dataProva={dataProva} comSenha={senhaConfigurada()} />;
+  const plano = normalizarPlano(planoBruto, meta);
+  return (
+    <Painel
+      provas={provas}
+      areas={areas}
+      meta={meta}
+      plano={plano}
+      planoSalvo={planoBruto !== null}
+      dataProva={dataProva}
+      comSenha={senhaConfigurada()}
+    />
+  );
 }

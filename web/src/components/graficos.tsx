@@ -16,7 +16,7 @@ import {
   YAxis,
 } from "recharts";
 import type { ReactNode } from "react";
-import { AMARELO, AZUL, ROXO, SERIES, VERMELHO, useCores } from "./comum";
+import { AMARELO, AZUL, LARANJA, MARINHO, SERIES, useCores } from "./comum";
 import {
   BANCA_FOCO,
   dataBR,
@@ -141,7 +141,7 @@ export function GraficoAreas({ dados, meta }: { dados: AreaAgregada[]; meta: num
           />
           <Bar dataKey="pct" radius={[0, 6, 6, 0]} maxBarSize={30} isAnimationActive={false}>
             {dados.map((d) => (
-              <Cell key={d.area} fill={d.area === pior ? VERMELHO : ROXO} />
+              <Cell key={d.area} fill={d.area === pior ? LARANJA : MARINHO} />
             ))}
             <LabelList dataKey="pct" position="right" formatter={(v: number) => fmtPct(v)} fill={c.texto} fontSize={12} />
           </Bar>
@@ -244,9 +244,9 @@ export function GraficoEvolucaoArea({ pontos, meta, area }: { pontos: PontoArea[
           />
           <Line
             dataKey="pct"
-            stroke={ROXO}
+            stroke={MARINHO}
             strokeWidth={3}
-            dot={{ r: 5.5, strokeWidth: 0, fill: ROXO }}
+            dot={{ r: 5.5, strokeWidth: 0, fill: MARINHO }}
             activeDot={{ r: 7 }}
             isAnimationActive={false}
           />

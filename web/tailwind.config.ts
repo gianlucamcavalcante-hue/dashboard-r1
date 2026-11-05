@@ -15,7 +15,7 @@ const config: Config = {
         text: "var(--text)",
         muted: "var(--muted)",
         faint: "var(--faint)",
-        accent: "#6366f1", // roxo (cor do R1)
+        accent: "#3a6aa5", // azul-marinho
         pos: "#16a34a",
         neg: "#ef4444",
         warn: "var(--warn)",

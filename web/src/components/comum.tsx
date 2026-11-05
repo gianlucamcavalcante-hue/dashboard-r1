@@ -4,13 +4,16 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 
 /* ---------------- cores ---------------- */
 
-export const ROXO = "#6366f1";
+/** Cor principal do painel: azul-marinho (no lugar do roxo). */
+export const MARINHO = "#3a6aa5";
+/** Laranja suave para a área mais fraca (sem vermelho de alarme). */
+export const LARANJA = "#e8833a";
 export const VERDE = "#22c55e";
 export const AMARELO = "#f59e0b";
 export const VERMELHO = "#ef4444";
 export const AZUL = "#38bdf8";
 /** Uma cor por banca nas linhas de evolução. */
-export const SERIES = ["#818cf8", "#38bdf8", "#34d399", "#fbbf24", "#f472b6", "#a78bfa", "#fb923c", "#2dd4bf"];
+export const SERIES = ["#3a6aa5", "#0ea5e9", "#10b981", "#f59e0b", "#e8833a", "#64748b", "#14b8a6", "#a16207"];
 
 export interface CoresTema {
   texto: string;
@@ -54,7 +57,7 @@ export function useCores(): CoresTema {
 
 /** Cor da nota frente à meta. */
 export function corFaixa(f: "bom" | "perto" | "ruim"): string {
-  return f === "bom" ? "text-pos" : f === "perto" ? "text-warn" : "text-neg";
+  return f === "bom" ? "text-pos" : f === "perto" ? "text-warn" : "text-text";
 }
 
 /* ---------------- blocos ---------------- */
@@ -110,7 +113,7 @@ export function Metrica({
 
 export function Aviso({
   children,
-  cor = VERMELHO,
+  cor = MARINHO,
   icone = "🎯",
 }: {
   children: ReactNode;
