@@ -7,6 +7,7 @@ import {
   excluirProvaDb,
   inserirProvaDb,
   salvarMetaDb,
+  salvarDataProvaDb,
   validarAreas,
   type AreaEntrada,
 } from "./db";
@@ -74,4 +75,11 @@ export async function excluirProva(provaId: number): Promise<Resultado> {
   const id = Number(provaId);
   if (!Number.isInteger(id)) return { ok: false, erro: "Prova inválida." };
   return executar(() => excluirProvaDb(id));
+}
+
+/** Data da prova-alvo (AAAA-MM-DD) ou "" para apagar. */
+export async function salvarDataProva(data: string): Promise<Resultado> {
+  const d = String(data ?? "");
+  if (d !== "" && !/^\d{4}-\d{2}-\d{2}$/.test(d)) return { ok: false, erro: "Data inválida." };
+  return executar(() => salvarDataProvaDb(d));
 }

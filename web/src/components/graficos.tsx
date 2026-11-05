@@ -255,3 +255,43 @@ export function GraficoEvolucaoArea({ pontos, meta, area }: { pontos: PontoArea[
     </div>
   );
 }
+
+/* ---------------- mini gráfico de uma área (cartões do foco) ---------------- */
+
+export function GraficoMini({ pontos, meta, cor }: { pontos: PontoArea[]; meta: number; cor: string }) {
+  const c = useCores();
+  return (
+    <div className="h-[72px]">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={pontos} margin={{ top: 6, right: 4, bottom: 2, left: 4 }}>
+          <YAxis domain={[0, 100]} hide />
+          <XAxis dataKey="t" type="number" domain={["dataMin", "dataMax"]} hide />
+          <ReferenceLine y={meta} stroke={AMARELO} strokeDasharray="4 3" />
+          <Tooltip
+            cursor={{ stroke: c.grade }}
+            content={({ active, payload }) => {
+              const p = active && (payload?.[0]?.payload as PontoArea | undefined);
+              if (!p) return null;
+              return (
+                <Caixa>
+                  <div className="font-semibold">{p.rotulo}</div>
+                  <div className="num">
+                    {fmtPct(p.pct)} · {p.acertos}/{p.total}
+                  </div>
+                </Caixa>
+              );
+            }}
+          />
+          <Line
+            dataKey="pct"
+            stroke={cor}
+            strokeWidth={2.5}
+            dot={{ r: 3, strokeWidth: 0, fill: cor }}
+            activeDot={{ r: 5 }}
+            isAnimationActive={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}

@@ -39,7 +39,6 @@ export default function Dashboard({ provas, areas, meta }: { provas: Prova[]; ar
   const series = evolucaoPorBanca(provas, areas);
   const porArea = agregarPorArea(areas);
   const porBanca = mediaPorBanca(provas, areas);
-  const estudo = estudoDosErros(areas);
 
   return (
     <div>
@@ -53,7 +52,7 @@ export default function Dashboard({ provas, areas, meta }: { provas: Prova[]; ar
         <Metrica
           rotulo="Média geral"
           valor={fmtPct(k.media)}
-          detalhe={`${fmtSinal(k.gap)}% vs meta (${meta}%)`}
+          detalhe={`${fmtSinal(k.gap)} pts vs meta (${meta}%)`}
           corDetalhe={corFaixa(faixa(k.media, meta))}
         />
         <Metrica rotulo="Melhor prova" valor={fmtPct(k.melhor.pct)} detalhe={`${k.melhor.banca} ${k.melhor.ano}`} />
@@ -62,7 +61,7 @@ export default function Dashboard({ provas, areas, meta }: { provas: Prova[]; ar
           <Metrica
             rotulo={`Média ${BANCA_FOCO}`}
             valor={k.mediaFoco === null ? "—" : fmtPct(k.mediaFoco)}
-            detalhe={k.mediaFoco === null ? undefined : `${fmtSinal(k.mediaFoco - meta)}% vs meta`}
+            detalhe={k.mediaFoco === null ? undefined : `${fmtSinal(k.mediaFoco - meta)} pts vs meta`}
             corDetalhe={k.mediaFoco === null ? undefined : corFaixa(faixa(k.mediaFoco, meta))}
           />
         </div>
@@ -101,7 +100,16 @@ export default function Dashboard({ provas, areas, meta }: { provas: Prova[]; ar
         </Secao>
       </div>
 
-      {estudo && (
+      <EstudoErros areas={areas} />
+    </div>
+  );
+}
+
+/** Quantas áreas feitas já tiveram os erros estudados. */
+export function EstudoErros({ areas }: { areas: Area[] }) {
+  const estudo = estudoDosErros(areas);
+  if (!estudo) return null;
+  return (
         <Secao titulo="📚 Estudo dos erros">
           <Card>
             <div className="flex items-baseline justify-between gap-3 text-sm">
@@ -141,7 +149,5 @@ export default function Dashboard({ provas, areas, meta }: { provas: Prova[]; ar
             </p>
           </Card>
         </Secao>
-      )}
-    </div>
   );
 }

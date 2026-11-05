@@ -4,34 +4,49 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { Botao, TemaCtx, useTemaEstado } from "./comum";
 import Dashboard from "./dashboard";
 import Provas from "./provas";
+import DiagnosticoFoco from "./foco";
 import { salvarMeta } from "@/server/acoes";
-import type { Area, Prova } from "@/lib/calc";
+import { BANCA_FOCO, type Area, type Prova } from "@/lib/calc";
 
 type Aba = "dashboard" | "provas";
+type Foco = "usp" | "todas";
 
 export default function Painel({
   provas,
   areas,
   meta,
+  dataProva,
   comSenha,
 }: {
   provas: Prova[];
   areas: Area[];
   meta: number;
+  dataProva: string | null;
   comSenha: boolean;
 }) {
   const temaEstado = useTemaEstado();
   const [aba, setAba] = useState<Aba>("dashboard");
+  const [foco, setFoco] = useState<Foco>("usp");
 
-  // lembra a última aba aberta neste aparelho
+  // lembra a última aba e o modo escolhidos neste aparelho
   useEffect(() => {
     try {
       const a = localStorage.getItem("aba");
       if (a === "provas" || a === "dashboard") setAba(a);
+      const f = localStorage.getItem("foco");
+      if (f === "usp" || f === "todas") setFoco(f);
     } catch {
       /* sem armazenamento */
     }
   }, []);
+  const trocarFoco = (f: Foco) => {
+    setFoco(f);
+    try {
+      localStorage.setItem("foco", f);
+    } catch {
+      /* sem armazenamento */
+    }
+  };
   const trocarAba = (a: Aba) => {
     setAba(a);
     try {
@@ -68,7 +83,35 @@ export default function Painel({
           </div>
         </header>
 
-        <nav className="mt-6 flex gap-1 border-b border-border" role="tablist">
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <div className="inline-flex rounded-xl border border-border bg-card p-1" role="radiogroup" aria-label="O que analisar">
+            {(
+              [
+                ["usp", `🎯 Foco ${BANCA_FOCO}`],
+                ["todas", "Todas as provas"],
+              ] as const
+            ).map(([id, texto]) => (
+              <button
+                key={id}
+                role="radio"
+                aria-checked={foco === id}
+                onClick={() => trocarFoco(id)}
+                className={`rounded-lg px-3.5 py-1.5 text-sm font-medium transition ${
+                  foco === id ? "bg-accent text-white shadow-sm" : "text-muted hover:text-text"
+                }`}
+              >
+                {texto}
+              </button>
+            ))}
+          </div>
+          <span className="text-xs text-muted">
+            {foco === "usp"
+              ? `Analisando só as provas da ${BANCA_FOCO}.`
+              : "Analisando todas as bancas juntas."}
+          </span>
+        </div>
+
+        <nav className="mt-5 flex gap-1 border-b border-border" role="tablist">
           {(
             [
               ["dashboard", "📊 Dashboard"],
@@ -91,9 +134,13 @@ export default function Painel({
 
         <main className="mt-6">
           {aba === "dashboard" ? (
-            <Dashboard provas={provas} areas={areas} meta={meta} />
+            foco === "usp" ? (
+              <DiagnosticoFoco provas={provas} areas={areas} meta={meta} dataProva={dataProva} />
+            ) : (
+              <Dashboard provas={provas} areas={areas} meta={meta} />
+            )
           ) : (
-            <Provas provas={provas} areas={areas} meta={meta} />
+            <Provas provas={provas} areas={areas} meta={meta} soFoco={foco === "usp"} />
           )}
         </main>
       </div>

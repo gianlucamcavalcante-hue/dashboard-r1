@@ -108,3 +108,75 @@ describe("contas do painel", () => {
     expect(mesAno("2026-12-31")).toBe("Dezembro/26");
   });
 });
+
+import { diagnostico, diasAte, filtrarBanca } from "../calc";
+
+describe("diagnóstico USP-SP", () => {
+  // 4 provas USP-SP completas: a área Cirurgia vai mal e não melhora; Pediatria melhora
+  const ps: Prova[] = [1, 2, 3, 4].map((i) => ({
+    id: 100 + i,
+    banca: "USP-SP",
+    ano: 2017 + i + (i === 4 ? 1 : 0), // 2018, 2019, 2020, 2022 (falta 2021)
+    data_feita: `2026-0${i}-10`,
+    total_questoes: 0,
+    acertos: 0,
+  }));
+  const as: Area[] = ps.flatMap((p, k) =>
+    AREAS.map((area) => {
+      const total = area === "Ginecologia" || area === "Obstetrícia" ? 12 : 24;
+      const acertos =
+        area === "Cirurgia" ? 10 : area === "Pediatria" ? [10, 12, 18, 20][k]! : Math.round(total * 0.7);
+      return { id: idArea++, prova_id: p.id, area, acertos, total, status: "feita", estudada: k < 3 };
+    }),
+  );
+  // totais da prova = soma das áreas (como o banco faz)
+  for (const p of ps) {
+    const ap = as.filter((a) => a.prova_id === p.id);
+    p.total_questoes = ap.reduce((s, a) => s + a.total, 0);
+    p.acertos = ap.reduce((s, a) => s + a.acertos, 0);
+  }
+  const outra: Prova = { id: 999, banca: "UNESP", ano: 2019, data_feita: "2026-05-01", total_questoes: 10, acertos: 10 };
+
+  const d = diagnostico([...ps, outra], as, 70)!;
+
+  it("ignora outras bancas", () => {
+    expect(d.nProvas).toBe(4);
+    expect(filtrarBanca([...ps, outra], as, "USP-SP").provas).toHaveLength(4);
+  });
+
+  it("Cirurgia é a prioridade: mais questões a ganhar", () => {
+    expect(d.areas[0]!.area).toBe("Cirurgia");
+    expect(d.areas[0]!.pctRecente).toBe(41.7);
+    expect(d.areas[0]!.questoes).toBe(24);
+    expect(d.areas[0]!.ganho).toBe(6.8); // (70 − 41,7)% de 24
+    expect(d.areas[0]!.tendencia).toBe(0);
+  });
+
+  it("Pediatria mostra a melhora recente", () => {
+    const ped = d.areas.find((a) => a.area === "Pediatria")!;
+    expect(ped.pctRecente).toBe(69.4); // (12+18+20)/72
+    expect(ped.tendencia).toBe(27.7); // 69,4 − 41,7
+  });
+
+  it("área na meta não pede questões a mais", () => {
+    expect(d.areas.find((a) => a.area === "Preventiva")!.ganho).toBe(0);
+  });
+
+  it("pendências de estudo e anos que faltam", () => {
+    expect(d.pendentes).toHaveLength(1);
+    expect(d.pendentes[0]!.prova.id).toBe(104);
+    expect(d.pendentes[0]!.areas).toHaveLength(6);
+    expect(d.anosFaltando).toEqual([2021]);
+  });
+
+  it("última prova e quanto falta no geral", () => {
+    expect(d.ultima!.id).toBe(104);
+    expect(d.questoesProva).toBe(120);
+    expect(d.faltam).toBeGreaterThan(0);
+  });
+
+  it("contagem de dias", () => {
+    expect(diasAte("2026-12-06", new Date(2026, 10, 5))).toBe(31);
+    expect(diasAte(null)).toBeNull();
+  });
+});

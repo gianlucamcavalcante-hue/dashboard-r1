@@ -13,7 +13,7 @@ export function sql(): Sql {
   if (!g.__sqlR1) {
     const url = process.env.DATABASE_URL;
     if (!url) throw new Error("DATABASE_URL não configurada.");
-    g.__sqlR1 = postgres(url, { prepare: false, max: 3, idle_timeout: 20, connect_timeout: 10 });
+    g.__sqlR1 = postgres(url, { prepare: false, max: 5, idle_timeout: 20, connect_timeout: 10 });
   }
   return g.__sqlR1;
 }
@@ -126,4 +126,17 @@ export async function atualizarAreasDb(provaId: number, areas: AreaEntrada[]) {
 
 export async function excluirProvaDb(provaId: number) {
   await sql()`DELETE FROM prova WHERE id = ${provaId}`;
+}
+
+/** Data da prova-alvo (USP-SP), guardada na tabela config. "" quando não definida. */
+export async function lerDataProva(): Promise<string | null> {
+  const rows = await sql()`SELECT valor FROM config WHERE chave = 'data_prova_foco'`;
+  const v = String(rows[0]?.valor ?? "");
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+}
+
+export async function salvarDataProvaDb(data: string): Promise<void> {
+  await sql()`
+    INSERT INTO config (chave, valor) VALUES ('data_prova_foco', ${data})
+    ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor`;
 }

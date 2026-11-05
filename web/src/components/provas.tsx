@@ -23,7 +23,9 @@ import { FormAreas, conferir, linhasDe, linhasVazias, paraSalvar, type LinhaArea
 import { adicionarProva, atualizarProva, excluirProva } from "@/server/acoes";
 import {
   AREAS,
+  BANCA_FOCO,
   FIZ,
+  filtrarBanca,
   NAO_FIZ,
   STATUS_LABEL,
   agregarPorArea,
@@ -49,14 +51,37 @@ const ICONE_CAT: Record<Categoria, string> = { concluida: "✅ ", revisar: "🟡
 
 type Msg = { tipo: "ok" | "erro"; texto: string } | null;
 
-export default function Provas({ provas, areas, meta }: { provas: Prova[]; areas: Area[]; meta: number }) {
+export default function Provas({
+  provas,
+  areas,
+  meta,
+  soFoco = false,
+}: {
+  provas: Prova[];
+  areas: Area[];
+  meta: number;
+  soFoco?: boolean;
+}) {
+  // no modo foco, lista e gráficos usam só a USP-SP; atualizar/excluir/adicionar continuam com todas
+  const an = soFoco ? filtrarBanca(provas, areas, BANCA_FOCO) : { provas, areas };
   return (
     <div>
+      {soFoco && (
+        <p className="mb-4 text-xs text-muted">
+          Mostrando só as provas da {BANCA_FOCO}. Para ver todas, escolha &quot;Todas as provas&quot; lá em cima.
+        </p>
+      )}
       {provas.length > 0 ? (
         <>
-          <ListaProvas provas={provas} areas={areas} />
-          <DesempenhoPorArea provas={provas} areas={areas} meta={meta} />
-          <EvolucaoPorArea provas={provas} areas={areas} meta={meta} />
+          {an.provas.length > 0 ? (
+            <>
+              <ListaProvas key={soFoco ? "foco" : "todas"} provas={an.provas} areas={an.areas} />
+              <DesempenhoPorArea provas={an.provas} areas={an.areas} meta={meta} soFoco={soFoco} />
+              <EvolucaoPorArea provas={an.provas} areas={an.areas} meta={meta} />
+            </>
+          ) : (
+            <Info>Nenhuma prova da {BANCA_FOCO} cadastrada ainda.</Info>
+          )}
           <div className="mt-8">
             <AtualizarProva provas={provas} areas={areas} meta={meta} />
             <ExcluirProva provas={provas} />
@@ -145,7 +170,17 @@ function ListaProvas({ provas, areas }: { provas: Prova[]; areas: Area[] }) {
 
 /* ---------------- desempenho por área (todas ou uma prova) ---------------- */
 
-function DesempenhoPorArea({ provas, areas, meta }: { provas: Prova[]; areas: Area[]; meta: number }) {
+function DesempenhoPorArea({
+  provas,
+  areas,
+  meta,
+  soFoco,
+}: {
+  provas: Prova[];
+  areas: Area[];
+  meta: number;
+  soFoco: boolean;
+}) {
   const [escolha, setEscolha] = useState<number>(0); // 0 = todas as provas
   const existe = escolha === 0 || provas.some((p) => p.id === escolha);
   const id = existe ? escolha : 0;
@@ -157,7 +192,7 @@ function DesempenhoPorArea({ provas, areas, meta }: { provas: Prova[]; areas: Ar
         valor={id}
         onChange={setEscolha}
         className="max-w-md"
-        opcoes={[{ valor: 0, texto: "🌍 Todas as provas (global)" }, ...provas.map((p) => ({ valor: p.id, texto: nomeProva(p) }))]}
+        opcoes={[{ valor: 0, texto: soFoco ? `🎯 Todas as provas da ${BANCA_FOCO}` : "🌍 Todas as provas (global)" }, ...provas.map((p) => ({ valor: p.id, texto: nomeProva(p) }))]}
       />
       <div className="mt-4">
         {id === 0 ? <AreasGlobal areas={areas} meta={meta} /> : <AreasDaProva ap={areasDaProva(areas, id)} meta={meta} />}
@@ -174,7 +209,7 @@ function AreasGlobal({ areas, meta }: { areas: Area[]; meta: number }) {
     <Card>
       <GraficoAreas dados={ag} meta={meta} />
       <Aviso>
-        <b>Área prioritária: {ag[0]!.area}</b>: {fmtPct(ag[0]!.pct)} de acerto somando todas as provas.
+        <b>Área prioritária: {ag[0]!.area}</b>: {fmtPct(ag[0]!.pct)} de acerto somando as provas acima.
       </Aviso>
       {semDados.length > 0 && <p className="mt-2 text-xs text-muted">Ainda sem notas em: {semDados.join(", ")}</p>}
     </Card>

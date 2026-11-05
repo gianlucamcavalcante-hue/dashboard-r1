@@ -369,3 +369,136 @@ export function faixa(v: number, meta: number): "bom" | "perto" | "ruim" {
 export function nomeProva(p: Prova): string {
   return `${p.banca} ${p.ano}${p.data_feita ? ` · ${mesAno(p.data_feita)}` : ""}`;
 }
+
+/* ======================================================================
+ * Diagnóstico de uma banca-alvo (USP-SP): onde ganhar pontos até a prova
+ * ====================================================================== */
+
+/** Quantas provas mais recentes contam como "fase atual". */
+export const N_RECENTES = 3;
+
+export interface DiagArea {
+  area: string;
+  pctGeral: number;
+  pctRecente: number;
+  /** pontos de diferença: recentes − anteriores (null se não há provas anteriores) */
+  tendencia: number | null;
+  /** quantas questões dessa área caem por prova (média das recentes) */
+  questoes: number;
+  /** quantas questões a mais por prova para chegar na meta */
+  ganho: number;
+  nProvas: number;
+}
+
+export interface Diagnostico {
+  nProvas: number;
+  nCompletas: number;
+  media: number | null;
+  ultima: ProvaComPct | null;
+  pctRecente: number | null;
+  /** pontos: média das recentes − média das anteriores */
+  tendencia: number | null;
+  questoesProva: number;
+  /** questões a mais por prova para bater a meta (0 se já bateu) */
+  faltam: number;
+  areas: DiagArea[]; // da maior prioridade para a menor
+  pendentes: { prova: Prova; areas: string[] }[];
+  anosFaltando: number[];
+}
+
+const soma = (xs: number[]) => xs.reduce((s, x) => s + x, 0);
+
+export function diagnostico(provas: Prova[], areas: Area[], meta: number, banca = BANCA_FOCO): Diagnostico | null {
+  const doFoco = provas
+    .filter((p) => p.banca === banca)
+    .sort((a, b) => dataMs(a.data_feita) - dataMs(b.data_feita) || a.id - b.id);
+  if (doFoco.length === 0) return null;
+  const ids = new Set(doFoco.map((p) => p.id));
+  const areasFoco = areas.filter((a) => ids.has(a.prova_id));
+
+  // geral: só provas completas, em ordem de data
+  const comp = provasCompletas(doFoco, areasFoco).sort(
+    (a, b) => dataMs(a.data_feita) - dataMs(b.data_feita) || a.id - b.id,
+  );
+  const recentes = comp.slice(-N_RECENTES);
+  const anteriores = comp.slice(0, -N_RECENTES);
+  const pctRecente = recentes.length ? pct(soma(recentes.map((p) => p.acertos)), soma(recentes.map((p) => p.total_questoes))) : null;
+  const pctAnt = anteriores.length ? pct(soma(anteriores.map((p) => p.acertos)), soma(anteriores.map((p) => p.total_questoes))) : null;
+  const questoesProva = recentes.length ? Math.round(soma(recentes.map((p) => p.total_questoes)) / recentes.length) : 0;
+  const faltam = pctRecente === null ? 0 : Math.max(0, ((meta - pctRecente) / 100) * questoesProva);
+
+  // por área: a ordem das provas define o que é "recente"
+  const ordem = new Map(doFoco.map((p, i) => [p.id, i]));
+  const diagAreas: DiagArea[] = [];
+  for (const ar of AREAS) {
+    const linhas = areasFoco
+      .filter((a) => a.area === ar && temNota(a))
+      .sort((a, b) => ordem.get(a.prova_id)! - ordem.get(b.prova_id)!);
+    if (linhas.length === 0) continue;
+    const rec = linhas.slice(-N_RECENTES);
+    const ant = linhas.slice(0, -N_RECENTES);
+    const pRec = pct(soma(rec.map((a) => a.acertos)), soma(rec.map((a) => a.total)))!;
+    const pAnt = ant.length ? pct(soma(ant.map((a) => a.acertos)), soma(ant.map((a) => a.total))) : null;
+    const questoes = soma(rec.map((a) => a.total)) / rec.length;
+    diagAreas.push({
+      area: ar,
+      pctGeral: pct(soma(linhas.map((a) => a.acertos)), soma(linhas.map((a) => a.total)))!,
+      pctRecente: pRec,
+      tendencia: pAnt === null ? null : arred1(pRec - pAnt),
+      questoes: arred1(questoes),
+      ganho: arred1(Math.max(0, ((meta - pRec) / 100) * questoes)),
+      nProvas: linhas.length,
+    });
+  }
+  diagAreas.sort((a, b) => b.ganho - a.ganho || a.pctRecente - b.pctRecente);
+
+  // erros ainda não estudados, da prova mais recente para a mais antiga
+  const pendentes = [...doFoco]
+    .reverse()
+    .map((p) => ({
+      prova: p,
+      areas: areasFoco.filter((a) => a.prova_id === p.id && a.status === FIZ && !a.estudada).map((a) => a.area),
+    }))
+    .filter((x) => x.areas.length > 0);
+
+  // anos que ficaram faltando entre a prova mais antiga e a mais nova que você já fez
+  const anos = new Set(doFoco.map((p) => p.ano));
+  const anosFaltando: number[] = [];
+  const minAno = Math.min(...anos);
+  const maxAno = Math.max(...anos);
+  for (let a = minAno + 1; a < maxAno; a++) if (!anos.has(a)) anosFaltando.push(a);
+
+  return {
+    nProvas: doFoco.length,
+    nCompletas: comp.length,
+    media: comp.length ? soma(comp.map((p) => p.pct)) / comp.length : null,
+    ultima: comp[comp.length - 1] ?? null,
+    pctRecente,
+    tendencia: pctRecente !== null && pctAnt !== null ? arred1(pctRecente - pctAnt) : null,
+    questoesProva,
+    faltam: arred1(faltam),
+    areas: diagAreas,
+    pendentes,
+    anosFaltando,
+  };
+}
+
+/** Dias inteiros de hoje até a data (AAAA-MM-DD); null se não houver data. */
+export function diasAte(data: string | null, hoje = new Date()): number | null {
+  if (!data) return null;
+  const alvo = dataMs(data);
+  const base = Date.UTC(hoje.getFullYear(), hoje.getMonth(), hoje.getDate());
+  return Math.round((alvo - base) / 86400000);
+}
+
+/** "≈ 4,8" (uma casa) */
+export function fmtNum1(v: number): string {
+  return v.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 1 });
+}
+
+/** Só as provas (e suas áreas) de uma banca. */
+export function filtrarBanca(provas: Prova[], areas: Area[], banca: string) {
+  const ps = provas.filter((p) => p.banca === banca);
+  const ids = new Set(ps.map((p) => p.id));
+  return { provas: ps, areas: areas.filter((a) => ids.has(a.prova_id)) };
+}
