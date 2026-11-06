@@ -4,6 +4,13 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  ComposedChart,
+  PolarAngleAxis,
+  PolarGrid,
+  PolarRadiusAxis,
+  Radar,
+  RadarChart,
+  ReferenceArea,
   Cell,
   LabelList,
   Legend,
@@ -25,7 +32,9 @@ import {
   type AreaAgregada,
   type BancaArea,
   type BancaMedia,
+  type BarraPareto,
   type PontoArea,
+  type PontoTempo,
   type SerieBanca,
 } from "@/lib/calc";
 
@@ -291,6 +300,171 @@ export function GraficoMini({ pontos, meta, cor }: { pontos: PontoArea[]; meta: 
             isAnimationActive={false}
           />
         </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/* ---------------- radar: equilíbrio entre as áreas ---------------- */
+
+export function GraficoRadar({ dados }: { dados: { area: string; atual: number; meta: number }[] }) {
+  const c = useCores();
+  const curto: Record<string, string> = {
+    "Clínica Médica": "Clínica",
+    Cirurgia: "Cirurgia",
+    Pediatria: "Pediatria",
+    Ginecologia: "Gineco",
+    Obstetrícia: "Obstetrícia",
+    Preventiva: "Preventiva",
+  };
+  return (
+    <div className="h-[300px]">
+      <ResponsiveContainer width="100%" height="100%">
+        <RadarChart data={dados} outerRadius="72%" margin={{ top: 8, right: 24, bottom: 8, left: 24 }}>
+          <PolarGrid stroke={c.grade} />
+          <PolarAngleAxis dataKey="area" tickFormatter={(v: string) => curto[v] ?? v} tick={{ fill: c.texto, fontSize: 12 }} />
+          <PolarRadiusAxis domain={[0, 100]} tickCount={6} tick={{ fill: c.muted, fontSize: 10 }} axisLine={false} angle={90} />
+          <Radar name="Sua meta" dataKey="meta" stroke={AMARELO} strokeDasharray="5 4" fill={AMARELO} fillOpacity={0.08} isAnimationActive={false} />
+          <Radar name="Fase atual" dataKey="atual" stroke={MARINHO} strokeWidth={2.5} fill={MARINHO} fillOpacity={0.28} isAnimationActive={false} />
+          <Legend wrapperStyle={{ fontSize: 12, color: c.muted }} />
+          <Tooltip
+            content={({ active, payload }) => {
+              const p = active && payload?.[0]?.payload;
+              if (!p) return null;
+              return (
+                <Caixa>
+                  <div className="font-semibold">{p.area}</div>
+                  <div className="num">
+                    fase atual {fmtPct(p.atual)} · meta {p.meta}%
+                  </div>
+                </Caixa>
+              );
+            }}
+          />
+        </RadarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/* ---------------- evolução: ordem em que fiz × ano da prova ---------------- */
+
+export function GraficoTempo({ pontos, meta, modo }: { pontos: PontoTempo[]; meta: number; modo: "ordem" | "ano" }) {
+  const c = useCores();
+  const dados = modo === "ordem" ? pontos : [...pontos].sort((a, b) => a.ano - b.ano || a.t - b.t);
+  const x = modo === "ordem" ? "t" : "ano";
+  const xs = dados.map((p) => (modo === "ordem" ? p.t : p.ano));
+  const min = Math.min(...xs);
+  const max = Math.max(...xs);
+  const folga = modo === "ordem" ? Math.max((max - min) * 0.04, 86400000 * 5) : 0.5;
+  return (
+    <div className="h-[320px]">
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={dados} margin={{ top: 10, right: 16, bottom: 0, left: -12 }}>
+          <CartesianGrid stroke={c.grade} vertical={false} />
+          <ReferenceArea y1={meta} y2={100} fill={VERDE_FAIXA} fillOpacity={0.08} ifOverflow="hidden" />
+          <XAxis
+            dataKey={x}
+            type="number"
+            domain={[min - folga, max + folga]}
+            ticks={modo === "ano" ? [...new Set(xs)] : undefined}
+            tickFormatter={(v: number) => (modo === "ordem" ? mesAnoCurto(v) : String(v))}
+            tick={{ fill: c.muted, fontSize: 12 }}
+            stroke={c.grade}
+            allowDecimals={false}
+          />
+          <YAxis domain={[0, 100]} ticks={TICKS_100} tick={{ fill: c.muted, fontSize: 12 }} stroke={c.grade} unit="%" />
+          <ReferenceLine y={meta} stroke={AMARELO} strokeDasharray="6 4" label={rotuloMeta(meta)} />
+          <Tooltip
+            cursor={{ stroke: c.grade }}
+            content={({ active, payload }) => {
+              const p = active && (payload?.[0]?.payload as PontoTempo | undefined);
+              if (!p) return null;
+              return (
+                <Caixa>
+                  <div className="font-semibold">{p.rotulo}</div>
+                  <div className="text-muted">feita em {mesAnoCurto(p.t)}</div>
+                  <div className="num mt-1">
+                    nota {fmtPct(p.pct)}
+                    {modo === "ordem" && <> · média móvel {fmtPct(p.movel)}</>}
+                  </div>
+                </Caixa>
+              );
+            }}
+          />
+          <Legend wrapperStyle={{ fontSize: 12, color: c.muted, paddingTop: 8 }} />
+          <Line
+            dataKey="pct"
+            name={modo === "ordem" ? "Nota de cada prova" : "Nota (pelo ano da prova)"}
+            stroke={modo === "ordem" ? "#94a3b8" : MARINHO}
+            strokeWidth={modo === "ordem" ? 1.5 : 2.5}
+            dot={{ r: 5, strokeWidth: 0, fill: modo === "ordem" ? "#94a3b8" : MARINHO }}
+            activeDot={{ r: 7 }}
+            isAnimationActive={false}
+          />
+          {modo === "ordem" && (
+            <Line
+              dataKey="movel"
+              name="Média móvel (3 provas)"
+              stroke={MARINHO}
+              strokeWidth={3.5}
+              dot={false}
+              isAnimationActive={false}
+            />
+          )}
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+const VERDE_FAIXA = "#22c55e";
+
+/* ---------------- pareto: o que mais te faz errar ---------------- */
+
+export function GraficoPareto({ dados }: { dados: BarraPareto[] }) {
+  const c = useCores();
+  return (
+    <div style={{ height: Math.max(180, dados.length * 38 + 50) }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={dados} layout="vertical" margin={{ top: 4, right: 70, bottom: 0, left: 4 }}>
+          <XAxis type="number" hide domain={[0, "dataMax"]} />
+          <YAxis
+            type="category"
+            dataKey="texto"
+            width={170}
+            tick={{ fill: c.texto, fontSize: 12 }}
+            stroke={c.grade}
+            tickLine={false}
+          />
+          <Tooltip
+            cursor={{ fill: c.grade, opacity: 0.4 }}
+            content={({ active, payload }) => {
+              const p = active && (payload?.[0]?.payload as BarraPareto | undefined);
+              if (!p) return null;
+              return (
+                <Caixa>
+                  <div className="font-semibold">{p.texto}</div>
+                  <div className="num">
+                    {p.n} erro{p.n > 1 ? "s" : ""} · {fmtPct(p.pct)} · acumulado {fmtPct(p.acumulado)}
+                  </div>
+                </Caixa>
+              );
+            }}
+          />
+          <Bar dataKey="n" radius={[0, 6, 6, 0]} maxBarSize={24} isAnimationActive={false}>
+            {dados.map((d, i) => (
+              <Cell key={d.chave} fill={i === 0 ? MARINHO : "#7f9cc4"} />
+            ))}
+            <LabelList
+              dataKey="pct"
+              position="right"
+              formatter={(v: number) => fmtPct(v)}
+              fill={c.texto}
+              fontSize={12}
+            />
+          </Bar>
+        </BarChart>
       </ResponsiveContainer>
     </div>
   );

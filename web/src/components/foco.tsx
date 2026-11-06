@@ -2,29 +2,39 @@
 
 import { useState, useTransition, type ReactNode } from "react";
 import { AMARELO, Botao, Card, Chip, Info, MARINHO, Metrica, Secao, VERDE, classeCampo, corFaixa } from "./comum";
-import { GraficoEvolucao, GraficoMini } from "./graficos";
+import { GraficoRadar, GraficoTempo } from "./graficos";
 import { EstudoErros } from "./dashboard";
 import { salvarDataProva, salvarPlanoFoco } from "@/server/acoes";
 import {
   AREAS,
   BANCA_FOCO,
+  MOTIVOS,
+  MOTIVO_TEXTO,
   N_RECENTES,
+  PERFIL_LABEL,
   QUESTOES_PADRAO,
+  chaveTema,
+  consistencia,
   dataBR,
   diagnostico,
   diasAte,
-  evolucaoDaArea,
-  evolucaoPorBanca,
   faixa,
   filtrarBanca,
   fmtNum1,
   fmtPct,
   fmtSinal,
+  focoDaSemana,
+  mapaCalor,
   mesAno,
+  pareto,
+  serieTempo,
   validarPlano,
   type Area,
+  type Consistencia,
   type DiagArea,
   type Diagnostico,
+  type ErroReg,
+  type Perfil,
   type PlanoFoco,
   type Prova,
 } from "@/lib/calc";
@@ -41,6 +51,8 @@ export default function DiagnosticoFoco({
   dataProva,
   planoAberto,
   setPlanoAberto,
+  erros,
+  irParaErros,
 }: {
   provas: Prova[];
   areas: Area[];
@@ -49,7 +61,10 @@ export default function DiagnosticoFoco({
   dataProva: string | null;
   planoAberto: boolean;
   setPlanoAberto: (v: boolean) => void;
+  erros: ErroReg[];
+  irParaErros: () => void;
 }) {
+  const [modoTempo, setModoTempo] = useState<"ordem" | "ano">("ordem");
   const d = diagnostico(provas, areas, plano);
   const foco = filtrarBanca(provas, areas, BANCA_FOCO);
 
@@ -58,7 +73,10 @@ export default function DiagnosticoFoco({
   }
 
   const metaGeral = Math.round(d.metaPct);
-  const series = evolucaoPorBanca(foco.provas, foco.areas);
+  const cons = consistencia(provas, areas);
+  const tempo = serieTempo(provas, areas);
+  const idsFoco = new Set(foco.provas.map((p) => p.id));
+  const errosFoco = erros.filter((e) => e.prova_id === null || idsFoco.has(e.prova_id));
 
   return (
     <div>
@@ -87,47 +105,58 @@ export default function DiagnosticoFoco({
         </button>
       )}
 
-      <Cartoes d={d} abrirPlano={() => setPlanoAberto(true)} />
+      <Kpis d={d} cons={cons} />
+      <Conquistas d={d} />
+
+      <FocoSemana d={d} erros={errosFoco} irParaErros={irParaErros} />
+
+      <div className="grid gap-x-6 lg:grid-cols-2">
+        <Secao titulo="🕸️ Equilíbrio entre as áreas" sub="Azul = sua fase atual (últimas 3 provas). Tracejado dourado = suas metas.">
+          <Card>
+            <GraficoRadar dados={d.areas.map((a) => ({ area: a.area, atual: a.pctRecente, meta: a.meta })).sort((a, b) => AREAS.indexOf(a.area as never) - AREAS.indexOf(b.area as never))} />
+          </Card>
+        </Secao>
+        <Secao titulo="📏 Consistência" sub="Barra = da sua pior à sua melhor nota na área. Ponto = média. Traço dourado = meta.">
+          <Card>
+            <Consistencias cons={cons} metas={plano.metas} />
+          </Card>
+        </Secao>
+      </div>
 
       <Prioridades d={d} />
-      <Plano d={d} />
 
-      <Secao titulo={`Evolução na ${BANCA_FOCO}`} sub={`Cada ponto é uma prova, na data em que você fez. Linha tracejada = sua meta (${metaGeral}%).`}>
+      <Secao
+        titulo={`📈 Evolução na ${BANCA_FOCO}`}
+        sub={
+          modoTempo === "ordem"
+            ? "Na ordem em que você fez. A linha grossa é a média móvel das últimas 3 provas: suaviza um dia ruim ou uma prova mais difícil. Faixa verde = acima da sua meta."
+            : "Pelo ano da prova: mostra se as provas de certos anos foram mais difíceis para você. Nas suas notas, as de 2021 em diante têm cerca de 120 questões; as anteriores, cerca de 100."
+        }
+        acao={
+          <div className="inline-flex rounded-lg border border-border bg-card p-0.5 text-xs">
+            {(
+              [
+                ["ordem", "Ordem em que fiz"],
+                ["ano", "Ano da prova"],
+              ] as const
+            ).map(([id, t]) => (
+              <button
+                key={id}
+                onClick={() => setModoTempo(id)}
+                className={`rounded-md px-2.5 py-1 font-medium ${modoTempo === id ? "bg-accent text-white" : "text-muted hover:text-text"}`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        }
+      >
         <Card>
-          <GraficoEvolucao series={series} meta={metaGeral} />
+          {tempo.length ? <GraficoTempo pontos={tempo} meta={metaGeral} modo={modoTempo} /> : <p className="text-sm text-muted">Sem provas completas ainda.</p>}
         </Card>
       </Secao>
 
-      <Secao titulo={`Cada área na ${BANCA_FOCO}`} sub="Número grande = fase atual. Linha tracejada = a sua meta para a área.">
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-          {AREAS.map((ar) => {
-            const da = d.areas.find((x) => x.area === ar);
-            const pts = evolucaoDaArea(ar, foco.areas, foco.provas);
-            if (!da || pts.length === 0) {
-              return (
-                <Card key={ar}>
-                  <div className="text-sm font-medium">{ar}</div>
-                  <div className="mt-2 text-sm text-muted">Sem notas ainda.</div>
-                </Card>
-              );
-            }
-            const f = faixa(da.pctRecente, da.meta);
-            return (
-              <div key={ar} className="rounded-2xl border border-border bg-card p-3 sm:p-4">
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-sm font-medium">{ar}</span>
-                  <Seta v={da.tendencia} />
-                </div>
-                <div className="mt-1 flex items-baseline gap-2">
-                  <span className={`num text-2xl font-semibold ${corFaixa(f)}`}>{fmtPct(da.pctRecente)}</span>
-                  <span className="num text-xs text-muted">meta {da.meta}%</span>
-                </div>
-                <GraficoMini pontos={pts} meta={da.meta} cor={COR_FAIXA[f]} />
-              </div>
-            );
-          })}
-        </div>
-      </Secao>
+      <MapaCalor provas={provas} areas={areas} metas={plano.metas} />
 
       <EstudoErros areas={foco.areas} />
     </div>
@@ -144,96 +173,386 @@ function Seta({ v }: { v: number | null }) {
   );
 }
 
-/** "≈ 7" sem casas, sempre para cima quando é o que falta (não engana). */
+/** Arredonda para cima o que falta (não engana para menos). */
 const q = (v: number) => fmtNum1(Math.ceil(v - 0.05));
 
-/* ---------------- os 4 números do topo ---------------- */
+/* ---------------- KPIs do topo ---------------- */
 
-function Cartoes({ d, abrirPlano }: { d: Diagnostico; abrirPlano: () => void }) {
+function Kpis({ d, cons }: { d: Diagnostico; cons: Consistencia[] }) {
   const T = d.totalQuestoes;
   const meta = d.metaQuestoes;
-
-  // 1. Última prova: quanto faltou (ou sobrou) na escala da prova-alvo
-  let ultimaDetalhe: ReactNode = undefined;
-  let ultimaCor = "text-muted";
-  if (d.ultima && d.ultimaQuestoes !== null) {
-    const falta = meta - d.ultimaQuestoes;
-    if (falta <= 0) {
-      ultimaDetalhe = `🎉 bateu a sua meta (≈ ${Math.round(d.ultimaQuestoes)} de ${T})`;
-      ultimaCor = "text-pos";
-    } else {
-      ultimaDetalhe = `faltaram só ${q(falta)} questões para a meta, numa prova de ${T}`;
-    }
-  }
-
-  // 2. Evolução: sempre a comparação mais justa e, se houver, a positiva
-  let evoValor: ReactNode = "—";
-  let evoRotulo = "Sua evolução";
-  let evoDetalhe: ReactNode = "faça mais provas para comparar";
-  let evoCor = "text-muted";
-  if (d.ultima && d.primeira && d.ultima.id !== d.primeira.id && d.ultima.pct > d.primeira.pct) {
-    evoValor = `+${fmtNum1(d.ultima.pct - d.primeira.pct)} pts`;
-    evoDetalhe = `da 1ª ${BANCA_FOCO} (${fmtPct(d.primeira.pct)}) para a última (${fmtPct(d.ultima.pct)})`;
-    evoCor = "text-pos";
-  } else if (d.melhor) {
-    evoRotulo = "Seu recorde";
-    evoValor = fmtPct(d.melhor.pct);
-    evoDetalhe = `${d.melhor.banca} ${d.melhor.ano}: você já fez isso uma vez`;
-  }
-
-  // 3. Hoje, na prova-alvo
-  let hojeDetalhe: ReactNode = undefined;
-  let hojeCor = "text-muted";
-  if (d.atualQuestoes !== null) {
-    const falta = meta - d.atualQuestoes;
-    if (falta <= 0) {
-      hojeDetalhe = "✓ no ritmo da sua meta";
-      hojeCor = "text-pos";
-    } else {
-      hojeDetalhe = `a ${q(falta)} questões da meta: cerca de ${fmtNum1(Math.ceil((falta / AREAS.length) * 2) / 2)} por área`;
-    }
-  }
+  const atual = d.atualQuestoes;
+  const caminho = atual === null || meta <= 0 ? null : Math.min(100, Math.round((atual / meta) * 100));
+  const forte = [...d.areas].sort((a, b) => b.pctRecente - a.pctRecente)[0];
+  const forteCons = forte ? cons.find((c) => c.area === forte.area) : undefined;
+  const prioridade = d.areas.find((a) => a.ganho > 0);
 
   return (
     <>
       <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Metrica
-          rotulo="Última prova"
-          valor={d.ultima ? fmtPct(d.ultima.pct) : "—"}
+          rotulo="Média recente"
+          valor={d.pctRecente === null ? "—" : fmtPct(d.pctRecente)}
           detalhe={
-            d.ultima ? (
+            <>
+              {atual !== null && <span className="block">≈ {Math.round(atual)} de {T} acertos</span>}
+              {d.tendencia !== null && d.tendencia >= 1 ? (
+                <span className="text-pos">▲ {fmtSinal(d.tendencia)} pts vs provas anteriores</span>
+              ) : (
+                <span>últimas {N_RECENTES} provas</span>
+              )}
+            </>
+          }
+        />
+        <div className="rounded-2xl border border-border bg-card px-4 py-4 sm:px-5">
+          <div className="text-[11px] font-medium uppercase tracking-wider text-muted">Rumo à meta</div>
+          <div className="num mt-1.5 text-2xl font-semibold tracking-tight sm:text-[28px]">
+            {caminho === null ? "—" : caminho >= 100 ? "Meta ✓" : `${caminho}%`}
+            {caminho !== null && caminho < 100 && <span className="ml-1 text-sm font-normal text-muted">do caminho</span>}
+          </div>
+          {caminho !== null && (
+            <>
+              <div className="mt-2 h-2 rounded-full bg-card2">
+                <div className="h-full rounded-full bg-accent" style={{ width: `${caminho}%` }} />
+              </div>
+              <div className="num mt-1.5 text-sm text-muted">
+                {atual !== null && meta - atual > 0
+                  ? `≈ ${Math.round(atual!)} de ${Math.round(meta)} · faltam ≈ ${q(meta - atual!)}`
+                  : `você está no ritmo da meta (${Math.round(meta)} de ${T})`}
+              </div>
+            </>
+          )}
+        </div>
+        <Metrica
+          rotulo="Área mais forte"
+          valor={forte ? forte.area : "—"}
+          detalhe={
+            forte ? (
               <>
-                <span className="block text-muted">
-                  {d.ultima.banca} {d.ultima.ano} · {mesAno(d.ultima.data_feita)}
-                </span>
-                {ultimaDetalhe}
+                <span className="num block">{fmtPct(forte.pctRecente)} na fase atual</span>
+                {forteCons?.perfil === "pilar" && <span className="text-pos">pilar seguro: oscila pouco</span>}
               </>
             ) : undefined
           }
-          corDetalhe={ultimaCor}
         />
-        <Metrica rotulo={evoRotulo} valor={evoValor} detalhe={evoDetalhe} corDetalhe={evoCor} />
         <Metrica
-          rotulo={`Hoje, na prova de ${T}`}
-          valor={d.atualQuestoes === null ? "—" : `≈ ${Math.round(d.atualQuestoes)} acertos`}
-          detalhe={hojeDetalhe}
-          corDetalhe={hojeCor}
+          rotulo="Foco prioritário"
+          valor={prioridade ? prioridade.area : "Todas na meta ✓"}
+          detalhe={
+            prioridade ? (
+              <span className="num">
+                +{fmtNum1(prioridade.ganho)} questões possíveis (de {prioridade.questoes}) até a sua meta de {prioridade.meta}%
+              </span>
+            ) : (
+              "mantenha o ritmo"
+            )
+          }
         />
-        <div className="rounded-2xl border border-border bg-card px-4 py-4 sm:px-5">
-          <div className="text-[11px] font-medium uppercase tracking-wider text-muted">Sua meta</div>
-          <div className="num mt-1.5 text-2xl font-semibold tracking-tight sm:text-[28px]">
-            {Math.round(meta)} <span className="text-base font-normal text-muted">de {T}</span>
-          </div>
-          <button onClick={abrirPlano} className="mt-1 text-sm text-accent underline-offset-2 hover:underline">
-            ajustar metas por área
-          </button>
-        </div>
       </div>
       <p className="mt-2 text-xs text-muted">
-        Só provas da {BANCA_FOCO}, convertidas para a prova deste ano ({T} questões). &quot;Hoje&quot; usa a sua fase
-        atual: as {N_RECENTES} provas mais recentes.
+        Só provas da {BANCA_FOCO}, convertidas para a prova deste ano ({T} questões). &quot;Recente&quot; = suas{" "}
+        {N_RECENTES} provas mais recentes.
       </p>
     </>
+  );
+}
+
+/** Faixa de conquistas: o que já deu certo (motivação com dado real). */
+function Conquistas({ d }: { d: Diagnostico }) {
+  const itens: ReactNode[] = [];
+  if (d.ultima) {
+    const falta = d.ultimaQuestoes !== null ? d.metaQuestoes - d.ultimaQuestoes : null;
+    itens.push(
+      <>
+        Última prova: <b>{fmtPct(d.ultima.pct)}</b> ({d.ultima.banca} {d.ultima.ano})
+        {falta !== null && (falta <= 0 ? " · bateu a meta 🎉" : ` · faltaram só ${q(falta)} questões`)}
+      </>,
+    );
+  }
+  if (d.ultima && d.primeira && d.ultima.id !== d.primeira.id && d.ultima.pct > d.primeira.pct) {
+    itens.push(
+      <>
+        <b className="text-pos">+{fmtNum1(d.ultima.pct - d.primeira.pct)} pts</b> desde a sua 1ª {BANCA_FOCO}
+      </>,
+    );
+  }
+  if (d.melhor) {
+    itens.push(
+      <>
+        Recorde: <b>{fmtPct(d.melhor.pct)}</b> ({d.melhor.banca} {d.melhor.ano})
+      </>,
+    );
+  }
+  if (!itens.length) return null;
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      {itens.map((it, i) => (
+        <span key={i} className="rounded-full border border-border bg-card px-3 py-1.5 text-xs">
+          {it}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/* ---------------- foco da semana + próximos passos ---------------- */
+
+function FocoSemana({ d, erros, irParaErros }: { d: Diagnostico; erros: ErroReg[]; irParaErros: () => void }) {
+  const f = focoDaSemana(d);
+  const passos = proximosPassos(d);
+  const motivos = pareto(erros.map((e) => e.motivo), (k) => MOTIVO_TEXTO[k] ?? k);
+  const temas = pareto(erros.map((e) => chaveTema(e.tema)));
+  const nomeTema = new Map(erros.map((e) => [chaveTema(e.tema), e.tema.trim()]));
+  const topMotivo = motivos[0];
+  const dica = topMotivo ? MOTIVOS.find((m) => m.id === topMotivo.chave)?.dica : undefined;
+
+  return (
+    <Secao titulo="🎯 Foco da semana" sub="Gerado automaticamente a partir das suas últimas provas e das suas metas.">
+      <Card className="border-accent/40">
+        {f && (
+          <div>
+            <div className="text-base font-semibold">
+              Esta semana: <span className="text-accent">{f.area}</span>
+            </div>
+            <p className="mt-1.5 text-sm leading-relaxed">
+              É a área que mais te afasta da sua meta. Nas últimas {N_RECENTES} provas ficou em{" "}
+              <b>{fmtPct(f.pctArea)}</b>, ou ≈ {Math.round(f.acertosHoje)} de {f.questoes} na prova de {d.totalQuestoes}
+              {f.abaixo > 0 && <>, {fmtNum1(f.abaixo)} pts abaixo da sua média geral</>}.
+            </p>
+            <div className="mt-3 rounded-xl bg-card2 px-4 py-3 text-sm leading-relaxed">
+              Para a sua nota geral <b>subir 5 pontos</b>
+              {d.atualQuestoes !== null && (
+                <>
+                  {" "}
+                  (≈ {Math.round(d.atualQuestoes)} → {Math.round(d.atualQuestoes) + f.extras} de {d.totalQuestoes})
+                </>
+              )}
+              , você precisa de <b>+{f.extras} acertos</b>.
+              {f.cabe ? (
+                <>
+                  {" "}
+                  Dá para tirar todos de {f.area}: de ≈ {Math.round(f.acertosHoje)} para{" "}
+                  {Math.min(f.questoes, Math.round(f.acertosHoje) + f.extras)} de {f.questoes}.
+                </>
+              ) : (
+                <> Em {f.area} sozinha não cabe tudo: divida entre as áreas abaixo.</>
+              )}
+              {f.divisao.length > 1 && (
+                <>
+                  {" "}
+                  Ou divida pelo que cada área rende: {f.divisao.map((x) => `+${x.extras} em ${x.area}`).join(", ")}.
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="mt-4 border-t border-border pt-4">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">Próximos passos</div>
+          <ol className="space-y-2.5 text-sm leading-relaxed">
+            {passos.map((it, i) => (
+              <li key={i} className="flex gap-3">
+                <span className="num mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent text-[11px] font-semibold text-white">
+                  {i + 1}
+                </span>
+                <span>{it}</span>
+              </li>
+            ))}
+            <li className="flex gap-3">
+              <span className="num mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent text-[11px] font-semibold text-white">
+                {passos.length + 1}
+              </span>
+              <span>
+                {topMotivo ? (
+                  <>
+                    Pelo seu caderno de erros, o que mais te derruba é <b>{topMotivo.texto}</b> ({fmtPct(topMotivo.pct)})
+                    {temas[0] && (
+                      <>
+                        , e o tema mais errado é <b>{nomeTema.get(temas[0].chave) ?? temas[0].chave}</b>
+                      </>
+                    )}
+                    .{dica && <> Dica: {dica}.</>}{" "}
+                  </>
+                ) : (
+                  <>Registre os erros de cada prova no caderno: o painel passa a mostrar por que você erra e quais temas mais caem para você. </>
+                )}
+                <button onClick={irParaErros} className="font-medium text-accent underline-offset-2 hover:underline">
+                  Abrir caderno de erros →
+                </button>
+              </span>
+            </li>
+          </ol>
+        </div>
+      </Card>
+    </Secao>
+  );
+}
+
+function proximosPassos(d: Diagnostico): ReactNode[] {
+  const subindo = d.areas.filter((a) => a.tendencia !== null && a.tendencia >= 3).sort((x, y) => y.tendencia! - x.tendencia!);
+  const oscilando = d.areas.filter((a) => a.tendencia !== null && a.tendencia <= -5 && a.ganho > 0);
+  const naMeta = d.areas.filter((a) => a.ganho <= 0);
+  const ultimaPend = d.pendentes[0];
+  const e = (xs: DiagArea[]) => xs.map((a) => a.area).join(" e ").replace(/ e (?=.* e )/g, ", ");
+  const itens: ReactNode[] = [];
+  if (subindo.length) {
+    itens.push(
+      <>
+        Você está subindo em <b>{e(subindo)}</b> ({subindo.map((a) => `${fmtSinal(a.tendencia!)} pts`).join(", ")}). O estudo
+        está funcionando: continue.
+      </>,
+    );
+  }
+  if (naMeta.length) {
+    itens.push(
+      <>
+        <b>{e(naMeta)}</b> já {naMeta.length > 1 ? "estão" : "está"} na sua meta: só manter com revisão leve.
+      </>,
+    );
+  }
+  if (oscilando.length) {
+    itens.push(
+      <>
+        Vale uma revisão em <b>{e(oscilando)}</b>: {oscilando.length > 1 ? "oscilaram" : "oscilou"} para baixo nas últimas
+        provas.
+      </>,
+    );
+  }
+  if (ultimaPend) {
+    itens.push(
+      <>
+        Estude os erros da <b>{ultimaPend.prova.banca} {ultimaPend.prova.ano}</b>
+        {ultimaPend.areas.length <= 3 && <> (falta {ultimaPend.areas.join(", ")})</>} antes da próxima prova: é onde está
+        o aprendizado mais fresco.
+      </>,
+    );
+  }
+  if (d.anosFaltando.length) {
+    itens.push(
+      <>
+        Provas da {BANCA_FOCO} que ainda não estão no painel: <b>{d.anosFaltando.join(", ")}</b>. Boas para fazer como
+        simulado.
+      </>,
+    );
+  }
+  return itens;
+}
+
+/* ---------------- consistência (faixa de cada área) ---------------- */
+
+const COR_PERFIL: Record<Perfil, string> = { pilar: VERDE, volatil: AMARELO, base: "#64748b", evolucao: MARINHO };
+
+function Consistencias({ cons, metas }: { cons: Consistencia[]; metas: Record<string, number> }) {
+  const pequenas = cons.filter((c) => c.pontosPorQuestao >= 8).map((c) => c.area);
+  return (
+    <div>
+      <div className="space-y-3.5">
+        {cons.map((c) => (
+          <div key={c.area}>
+            <div className="flex flex-wrap items-baseline justify-between gap-x-2 text-sm">
+              <span className="font-medium">
+                {c.area} <Chip texto={PERFIL_LABEL[c.perfil]} cor={COR_PERFIL[c.perfil]} />
+              </span>
+              <span className="num text-xs text-muted">
+                média {fmtPct(c.media)} · oscila ±{fmtNum1(Math.round(c.dp))} pts
+              </span>
+            </div>
+            <div className="relative mt-1.5 h-3 rounded-full bg-card2">
+              <div
+                className="absolute inset-y-0 rounded-full"
+                style={{ left: `${c.min}%`, width: `${Math.max(1, c.max - c.min)}%`, background: `${COR_PERFIL[c.perfil]}55` }}
+                title={`de ${fmtPct(c.min)} a ${fmtPct(c.max)}`}
+              />
+              <div
+                className="absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-card"
+                style={{ left: `${c.media}%`, background: COR_PERFIL[c.perfil] }}
+              />
+              {metas[c.area] !== undefined && (
+                <div className="absolute -inset-y-1 w-0.5 rounded bg-gold" style={{ left: `${metas[c.area]}%` }} />
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="mt-4 text-xs leading-relaxed text-muted">
+        <b>Pilar seguro</b> = acima da sua média e estável. <b>Volátil</b> = muda muito de uma prova para outra.{" "}
+        {pequenas.length > 0 && (
+          <>
+            Em {pequenas.join(" e ")}, 1 questão vale cerca de 10 pts: oscilar ali é esperado, então olhe mais para a
+            média.{" "}
+          </>
+        )}
+        O painel não sabe quantas horas você estuda cada área; quem decide o esforço são as suas metas por área.
+      </p>
+    </div>
+  );
+}
+
+/* ---------------- mapa de calor: prova × área ---------------- */
+
+const CURTO: Record<string, string> = {
+  "Clínica Médica": "Clínica",
+  Cirurgia: "Cirurgia",
+  Pediatria: "Pediatria",
+  Ginecologia: "Gineco",
+  Obstetrícia: "Obstet.",
+  Preventiva: "Prevent.",
+};
+
+function MapaCalor({ provas, areas, metas }: { provas: Prova[]; areas: Area[]; metas: Record<string, number> }) {
+  const linhas = mapaCalor(provas, areas);
+  if (!linhas.length) return null;
+  const fundo = (v: number | null) =>
+    v === null ? "transparent" : `rgba(58,106,165,${(0.1 + (v / 100) * 0.8).toFixed(2)})`;
+  const claro = (v: number | null) => v !== null && v >= 55;
+  return (
+    <Secao
+      titulo="🗺️ Mapa de calor: prova × área"
+      sub="Quanto mais escuro, maior a nota. ✓ = bateu a sua meta da área. De cima para baixo, na ordem em que você fez."
+    >
+      <div className="overflow-x-auto rounded-xl border border-border bg-card">
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr>
+              <th className="border-b border-border px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-muted">
+                Prova
+              </th>
+              {AREAS.map((a) => (
+                <th key={a} className="border-b border-border px-2 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wider text-muted">
+                  {CURTO[a]}
+                </th>
+              ))}
+              <th className="border-b border-border px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-muted">
+                Geral
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {linhas.map((l) => (
+              <tr key={l.prova.id} className="border-b border-border last:border-0">
+                <td className="whitespace-nowrap px-3 py-2">
+                  <div className="font-medium">{l.prova.ano}</div>
+                  <div className="text-xs text-muted">feita {mesAno(l.prova.data_feita)}</div>
+                </td>
+                {l.celulas.map((c) => (
+                  <td key={c.area} className="p-1">
+                    <div
+                      className={`num rounded-md px-1 py-2 text-center text-xs font-semibold ${claro(c.pct) ? "text-white" : ""}`}
+                      style={{ background: fundo(c.pct) }}
+                      title={c.pct === null ? (c.status === "nao_fiz" ? "não fiz" : "sem nota") : `${c.acertos}/${c.total}`}
+                    >
+                      {c.pct === null ? <span className="text-faint">—</span> : `${Math.round(c.pct)}%`}
+                      {c.pct !== null && metas[c.area] !== undefined && c.pct >= metas[c.area]! && " ✓"}
+                    </div>
+                  </td>
+                ))}
+                <td className="num px-3 py-2 text-right font-semibold">{l.geral === null ? "—" : fmtPct(l.geral)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Secao>
   );
 }
 
@@ -317,87 +636,6 @@ function Ganho({ a }: { a: DiagArea }) {
     <span className="num whitespace-nowrap text-sm font-semibold">
       +{fmtNum1(a.ganho)} <span className="font-normal text-muted">de {a.questoes}</span>
     </span>
-  );
-}
-
-/* ---------------- plano em frases ---------------- */
-
-function Plano({ d }: { d: Diagnostico }) {
-  const abaixo = d.areas.filter((a) => a.ganho > 0);
-  const top = abaixo.slice(0, 2);
-  const somaTop = top.reduce((s, a) => s + a.ganho, 0);
-  const subindo = d.areas.filter((a) => a.tendencia !== null && a.tendencia >= 3).sort((x, y) => y.tendencia! - x.tendencia!);
-  const oscilando = d.areas.filter((a) => a.tendencia !== null && a.tendencia <= -5 && a.ganho > 0);
-  const naMeta = d.areas.filter((a) => a.ganho <= 0);
-  const ultimaPend = d.pendentes[0];
-  const e = (xs: DiagArea[]) => xs.map((a) => a.area).join(" e ").replace(/ e (?=.* e )/g, ", ");
-
-  const itens: ReactNode[] = [];
-  if (top.length) {
-    itens.push(
-      <>
-        Seu foco agora: <b>{e(top)}</b>. Chegar na sua meta {top.length > 1 ? "nelas" : "nela"} vale{" "}
-        <b>+{fmtNum1(somaTop)} questões</b> na prova.
-      </>,
-    );
-  }
-  if (subindo.length) {
-    itens.push(
-      <>
-        Você está subindo em <b>{e(subindo)}</b> ({subindo.map((a) => `${fmtSinal(a.tendencia!)} pts`).join(", ")} nas
-        provas recentes). O estudo está funcionando: continue.
-      </>,
-    );
-  }
-  if (naMeta.length) {
-    itens.push(
-      <>
-        <b>{e(naMeta)}</b> já {naMeta.length > 1 ? "estão" : "está"} na sua meta: só manter com revisão leve.
-      </>,
-    );
-  }
-  if (oscilando.length) {
-    itens.push(
-      <>
-        Vale uma revisão em <b>{e(oscilando)}</b>: {oscilando.length > 1 ? "oscilaram" : "oscilou"} para baixo nas últimas
-        provas.
-      </>,
-    );
-  }
-  if (ultimaPend) {
-    itens.push(
-      <>
-        Estude os erros da <b>{ultimaPend.prova.banca} {ultimaPend.prova.ano}</b> antes da próxima prova: é onde está o
-        aprendizado mais fresco.
-        {d.pendentes.length > 1 && <> Outras {d.pendentes.length - 1} prova(s) da {BANCA_FOCO} também têm erros para estudar.</>}
-      </>,
-    );
-  }
-  if (d.anosFaltando.length) {
-    itens.push(
-      <>
-        Provas da {BANCA_FOCO} que ainda não estão no painel: <b>{d.anosFaltando.join(", ")}</b>. Boas para fazer como
-        simulado.
-      </>,
-    );
-  }
-  if (!itens.length) return null;
-
-  return (
-    <Secao titulo="🧭 Seu plano até a prova" sub="Gerado a partir das suas notas e das suas metas por área.">
-      <Card>
-        <ol className="space-y-2.5 text-sm leading-relaxed">
-          {itens.map((it, i) => (
-            <li key={i} className="flex gap-3">
-              <span className="num mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent text-[11px] font-semibold text-white">
-                {i + 1}
-              </span>
-              <span>{it}</span>
-            </li>
-          ))}
-        </ol>
-      </Card>
-    </Secao>
   );
 }
 

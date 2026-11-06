@@ -1,28 +1,58 @@
 import "server-only";
-import postgres from "postgres";
-import { AREAS, FIZ, NAO_FIZ, type Area, type Prova } from "@/lib/calc";
+import pg from "pg";
+import { AREAS, FIZ, NAO_FIZ, type Area, type ErroReg, type Prova } from "@/lib/calc";
 
 /**
- * Conexão com o mesmo banco Supabase do app antigo.
- * A URL usa o "pooler" do Supabase (porta 6543), próprio para a Vercel: por isso prepare=false.
+ * Conexão com o mesmo banco Supabase do app antigo, pelo "pooler" (porta 6543), próprio para a Vercel.
+ * Usa a biblioteca "pg", que faz uma pergunta por conexão de cada vez: a biblioteca anterior ("postgres")
+ * mandava várias de uma vez na mesma conexão e o pooler do Supabase travava quando duas páginas abriam juntas.
  */
-type Sql = ReturnType<typeof postgres>;
-const g = globalThis as unknown as { __sqlR1?: Sql };
+const g = globalThis as unknown as { __poolR1?: pg.Pool };
 
-export function sql(): Sql {
-  if (!g.__sqlR1) {
+function pool(): pg.Pool {
+  if (!g.__poolR1) {
     const url = process.env.DATABASE_URL;
     if (!url) throw new Error("DATABASE_URL não configurada.");
-    g.__sqlR1 = postgres(url, { prepare: false, max: 5, idle_timeout: 20, connect_timeout: 10 });
+    g.__poolR1 = new pg.Pool({
+      connectionString: url,
+      max: 5,
+      idleTimeoutMillis: 20_000,
+      connectionTimeoutMillis: 10_000,
+      query_timeout: 20_000,
+    });
   }
-  return g.__sqlR1;
+  return g.__poolR1;
+}
+
+type Cliente = Pick<pg.PoolClient, "query">;
+
+/** Faz uma consulta e devolve as linhas. */
+export async function q(texto: string, params: unknown[] = [], cli: Cliente = pool()) {
+  const r = await cli.query(texto, params);
+  return Object.assign(r.rows as Record<string, unknown>[], { count: r.rowCount ?? 0 });
+}
+
+/** Tudo dentro de fn acontece junto, ou nada acontece. */
+async function transacao<T>(fn: (cli: pg.PoolClient) => Promise<T>): Promise<T> {
+  const cli = await pool().connect();
+  try {
+    await cli.query("BEGIN");
+    const res = await fn(cli);
+    await cli.query("COMMIT");
+    return res;
+  } catch (e) {
+    await cli.query("ROLLBACK").catch(() => {});
+    throw e;
+  } finally {
+    cli.release();
+  }
 }
 
 export async function listarProvas(): Promise<Prova[]> {
-  const rows = await sql()`
+  const rows = await q(`
     SELECT id, banca, ano, to_char(data_feita, 'YYYY-MM-DD') AS data_feita,
            total_questoes, acertos
-    FROM prova ORDER BY data_feita DESC, id DESC`;
+    FROM prova ORDER BY data_feita DESC, id DESC`);
   return rows.map((r) => ({
     id: Number(r.id),
     banca: String(r.banca),
@@ -34,8 +64,8 @@ export async function listarProvas(): Promise<Prova[]> {
 }
 
 export async function listarAreas(): Promise<Area[]> {
-  const rows = await sql()`
-    SELECT id, prova_id, area, acertos, total, status, estudada FROM desempenho_area ORDER BY id`;
+  const rows = await q(`
+    SELECT id, prova_id, area, acertos, total, status, estudada FROM desempenho_area ORDER BY id`);
   return rows.map((r) => ({
     id: Number(r.id),
     prova_id: Number(r.prova_id),
@@ -48,15 +78,15 @@ export async function listarAreas(): Promise<Area[]> {
 }
 
 export async function lerMeta(): Promise<number> {
-  const rows = await sql()`SELECT valor FROM config WHERE chave = 'meta_percentual'`;
+  const rows = await q(`SELECT valor FROM config WHERE chave = 'meta_percentual'`);
   const v = Number(rows[0]?.valor);
   return Number.isFinite(v) && v > 0 ? Math.round(v) : 70;
 }
 
 export async function salvarMetaDb(meta: number): Promise<void> {
-  await sql()`
-    INSERT INTO config (chave, valor) VALUES ('meta_percentual', ${String(meta)})
-    ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor`;
+  await q(`
+    INSERT INTO config (chave, valor) VALUES ('meta_percentual', $1)
+    ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor`, [String(meta)]);
 }
 
 export interface AreaEntrada {
@@ -81,26 +111,26 @@ export function validarAreas(areas: AreaEntrada[]): string | null {
 }
 
 /** Total e acertos da prova = soma das áreas que fiz (igual ao app antigo). */
-async function recalcular(tx: Sql | postgres.TransactionSql, provaId: number) {
-  await tx`
+async function recalcular(tx: Cliente, provaId: number) {
+  await q(`
     UPDATE prova SET
       total_questoes = COALESCE((SELECT SUM(total) FROM desempenho_area
-                                 WHERE prova_id = ${provaId} AND status = 'feita'), 0),
+                                 WHERE prova_id = $1 AND status = 'feita'), 0),
       acertos        = COALESCE((SELECT SUM(acertos) FROM desempenho_area
-                                 WHERE prova_id = ${provaId} AND status = 'feita'), 0)
-    WHERE id = ${provaId}`;
+                                 WHERE prova_id = $2 AND status = 'feita'), 0)
+    WHERE id = $3`, [provaId, provaId, provaId], tx);
 }
 
 export async function inserirProvaDb(banca: string, ano: number, data: string, areas: AreaEntrada[]) {
-  return sql().begin(async (tx) => {
-    const [r] = await tx`
+  return transacao(async (tx) => {
+    const [r] = await q(`
       INSERT INTO prova (banca, ano, data_feita, total_questoes, acertos)
-      VALUES (${banca}, ${ano}, ${data}, 0, 0) RETURNING id`;
+      VALUES ($1, $2, $3, 0, 0) RETURNING id`, [banca, ano, data], tx);
     const id = Number(r!.id);
     for (const a of areas) {
-      await tx`
+      await q(`
         INSERT INTO desempenho_area (prova_id, area, status, acertos, total, estudada)
-        VALUES (${id}, ${a.area}, ${a.status}, ${a.acertos}, ${a.total}, ${a.estudada})`;
+        VALUES ($1, $2, $3, $4, $5, $6)`, [id, a.area, a.status, a.acertos, a.total, a.estudada], tx);
     }
     await recalcular(tx, id);
     return id;
@@ -108,16 +138,16 @@ export async function inserirProvaDb(banca: string, ano: number, data: string, a
 }
 
 export async function atualizarAreasDb(provaId: number, areas: AreaEntrada[]) {
-  await sql().begin(async (tx) => {
+  await transacao(async (tx) => {
     for (const a of areas) {
-      const res = await tx`
-        UPDATE desempenho_area SET status = ${a.status}, acertos = ${a.acertos},
-               total = ${a.total}, estudada = ${a.estudada}
-        WHERE prova_id = ${provaId} AND area = ${a.area}`;
+      const res = await q(`
+        UPDATE desempenho_area SET status = $1, acertos = $2,
+               total = $3, estudada = $4
+        WHERE prova_id = $5 AND area = $6`, [a.status, a.acertos, a.total, a.estudada, provaId, a.area], tx);
       if (res.count === 0) {
-        await tx`
+        await q(`
           INSERT INTO desempenho_area (prova_id, area, status, acertos, total, estudada)
-          VALUES (${provaId}, ${a.area}, ${a.status}, ${a.acertos}, ${a.total}, ${a.estudada})`;
+          VALUES ($1, $2, $3, $4, $5, $6)`, [provaId, a.area, a.status, a.acertos, a.total, a.estudada], tx);
       }
     }
     await recalcular(tx, provaId);
@@ -125,25 +155,25 @@ export async function atualizarAreasDb(provaId: number, areas: AreaEntrada[]) {
 }
 
 export async function excluirProvaDb(provaId: number) {
-  await sql()`DELETE FROM prova WHERE id = ${provaId}`;
+  await q(`DELETE FROM prova WHERE id = $1`, [provaId]);
 }
 
 /** Data da prova-alvo (USP-SP), guardada na tabela config. "" quando não definida. */
 export async function lerDataProva(): Promise<string | null> {
-  const rows = await sql()`SELECT valor FROM config WHERE chave = 'data_prova_foco'`;
+  const rows = await q(`SELECT valor FROM config WHERE chave = 'data_prova_foco'`);
   const v = String(rows[0]?.valor ?? "");
   return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
 }
 
 export async function salvarDataProvaDb(data: string): Promise<void> {
-  await sql()`
-    INSERT INTO config (chave, valor) VALUES ('data_prova_foco', ${data})
-    ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor`;
+  await q(`
+    INSERT INTO config (chave, valor) VALUES ('data_prova_foco', $1)
+    ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor`, [data]);
 }
 
 /** Metas e questões por área para a prova-alvo (JSON na tabela config), ou null se nunca salvo. */
 export async function lerPlanoFoco(): Promise<unknown> {
-  const rows = await sql()`SELECT valor FROM config WHERE chave = 'plano_foco'`;
+  const rows = await q(`SELECT valor FROM config WHERE chave = 'plano_foco'`);
   try {
     return rows[0]?.valor ? JSON.parse(String(rows[0].valor)) : null;
   } catch {
@@ -152,7 +182,48 @@ export async function lerPlanoFoco(): Promise<unknown> {
 }
 
 export async function salvarPlanoFocoDb(json: string): Promise<void> {
-  await sql()`
-    INSERT INTO config (chave, valor) VALUES ('plano_foco', ${json})
-    ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor`;
+  await q(`
+    INSERT INTO config (chave, valor) VALUES ('plano_foco', $1)
+    ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor`, [json]);
+}
+
+/* ---------------- caderno de erros (tabela "erro", que já existia no banco) ---------------- */
+
+export async function listarErros(): Promise<ErroReg[]> {
+  const rows = await q(`
+    SELECT id, prova_id, numero_questao, area, tema, tipo_erro, conceito, card_feito
+    FROM erro ORDER BY id DESC`);
+  return rows.map((r) => ({
+    id: Number(r.id),
+    prova_id: r.prova_id === null ? null : Number(r.prova_id),
+    area: String(r.area ?? ""),
+    tema: String(r.tema ?? ""),
+    motivo: String(r.tipo_erro ?? ""),
+    anotacao: String(r.conceito ?? ""),
+    numero: r.numero_questao === null ? null : Number(r.numero_questao),
+    card: Boolean(r.card_feito),
+  }));
+}
+
+export interface ErroEntrada {
+  prova_id: number | null;
+  area: string;
+  tema: string;
+  motivo: string;
+  anotacao: string;
+  numero: number | null;
+}
+
+export async function inserirErroDb(e: ErroEntrada): Promise<void> {
+  await q(`
+    INSERT INTO erro (prova_id, numero_questao, area, tema, tipo_erro, conceito, card_feito)
+    VALUES ($1, $2, $3, $4, $5, $6, false)`, [e.prova_id, e.numero, e.area, e.tema, e.motivo, e.anotacao]);
+}
+
+export async function excluirErroDb(id: number): Promise<void> {
+  await q(`DELETE FROM erro WHERE id = $1`, [id]);
+}
+
+export async function marcarCardDb(id: number, card: boolean): Promise<void> {
+  await q(`UPDATE erro SET card_feito = $1 WHERE id = $2`, [card, id]);
 }

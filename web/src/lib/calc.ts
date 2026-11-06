@@ -601,3 +601,261 @@ export function filtrarBanca(provas: Prova[], areas: Area[], banca: string) {
   const ids = new Set(ps.map((p) => p.id));
   return { provas: ps, areas: areas.filter((a) => ids.has(a.prova_id)) };
 }
+
+/* ======================================================================
+ * Análises avançadas (modo foco): consistência, média móvel, foco da semana
+ * ====================================================================== */
+
+export type Perfil = "pilar" | "volatil" | "base" | "evolucao";
+export const PERFIL_LABEL: Record<Perfil, string> = {
+  pilar: "Pilar seguro",
+  volatil: "Volátil",
+  base: "Base estável",
+  evolucao: "Em evolução",
+};
+
+export interface Consistencia {
+  area: string;
+  n: number;
+  media: number;
+  dp: number; // desvio padrão em pontos
+  min: number;
+  max: number;
+  perfil: Perfil;
+  /** quantos pontos percentuais vale 1 questão nessa área (pela média de questões por prova) */
+  pontosPorQuestao: number;
+}
+
+function desvio(xs: number[]): number {
+  if (xs.length < 2) return 0;
+  const m = soma(xs) / xs.length;
+  return Math.sqrt(soma(xs.map((x) => (x - m) ** 2)) / (xs.length - 1));
+}
+
+/**
+ * Média, oscilação (desvio padrão) e faixa de cada área nas provas da banca.
+ * Pilar seguro = acima da sua média geral e oscila pouco; volátil = oscila muito.
+ */
+export function consistencia(provas: Prova[], areas: Area[], banca = BANCA_FOCO): Consistencia[] {
+  const f = filtrarBanca(provas, areas, banca);
+  const comNota = f.areas.filter(temNota);
+  const todas = comNota.map((a) => (a.acertos / a.total) * 100);
+  const mediaGeral = todas.length ? soma(todas) / todas.length : 0;
+  const res: Consistencia[] = [];
+  for (const ar of AREAS) {
+    const linhas = comNota.filter((a) => a.area === ar);
+    if (linhas.length === 0) continue;
+    const pcts = linhas.map((a) => (a.acertos / a.total) * 100);
+    const media = soma(pcts) / pcts.length;
+    const dp = desvio(pcts);
+    const perfil: Perfil =
+      dp > 12 ? "volatil" : media >= mediaGeral ? (dp <= 10 ? "pilar" : "evolucao") : dp <= 10 ? "base" : "evolucao";
+    res.push({
+      area: ar,
+      n: linhas.length,
+      media: arred1(media),
+      dp: arred1(dp),
+      min: arred1(Math.min(...pcts)),
+      max: arred1(Math.max(...pcts)),
+      perfil,
+      pontosPorQuestao: arred1(100 / (soma(linhas.map((a) => a.total)) / linhas.length)),
+    });
+  }
+  return res;
+}
+
+export interface PontoTempo {
+  id: number;
+  t: number;
+  ano: number;
+  rotulo: string;
+  pct: number;
+  /** média das últimas 3 provas até esta (inclusive) */
+  movel: number;
+}
+
+/** Provas completas da banca em ordem de data, com média móvel de 3. */
+export function serieTempo(provas: Prova[], areas: Area[], banca = BANCA_FOCO, janela = 3): PontoTempo[] {
+  const f = filtrarBanca(provas, areas, banca);
+  const comp = provasCompletas(f.provas, f.areas)
+    .filter((p) => p.data_feita)
+    .sort((a, b) => dataMs(a.data_feita) - dataMs(b.data_feita) || a.id - b.id);
+  return comp.map((p, i) => {
+    const jan = comp.slice(Math.max(0, i - janela + 1), i + 1);
+    return {
+      id: p.id,
+      t: dataMs(p.data_feita),
+      ano: p.ano,
+      rotulo: `${p.banca} ${p.ano}`,
+      pct: p.pct,
+      movel: arred1(soma(jan.map((x) => x.pct)) / jan.length),
+    };
+  });
+}
+
+export interface CelulaMapa {
+  area: string;
+  pct: number | null;
+  acertos: number;
+  total: number;
+  status: string | null;
+}
+export interface LinhaMapa {
+  prova: Prova;
+  geral: number | null;
+  celulas: CelulaMapa[];
+}
+
+/** Mapa de calor: cada prova da banca (mais antiga em cima) × cada área. */
+export function mapaCalor(provas: Prova[], areas: Area[], banca = BANCA_FOCO): LinhaMapa[] {
+  const f = filtrarBanca(provas, areas, banca);
+  return [...f.provas]
+    .sort((a, b) => dataMs(a.data_feita) - dataMs(b.data_feita) || a.id - b.id)
+    .map((p) => {
+      const ap = f.areas.filter((a) => a.prova_id === p.id);
+      return {
+        prova: p,
+        geral: pct(p.acertos, p.total_questoes),
+        celulas: AREAS.map((ar) => {
+          const a = ap.find((x) => x.area === ar);
+          return {
+            area: ar,
+            pct: a && temNota(a) ? pct(a.acertos, a.total) : null,
+            acertos: a?.acertos ?? 0,
+            total: a?.total ?? 0,
+            status: a?.status ?? null,
+          };
+        }),
+      };
+    });
+}
+
+export interface FocoSemana {
+  area: string;
+  pctArea: number;
+  /** pontos abaixo da sua média geral recente */
+  abaixo: number;
+  /** acertos hoje nessa área, na prova-alvo */
+  acertosHoje: number;
+  questoes: number;
+  /** acertos extras para subir +5 pontos na nota geral (5% da prova) */
+  extras: number;
+  /** cabe tudo nessa área? (se não, mostra a divisão) */
+  cabe: boolean;
+  /** alternativa: dividir os acertos extras entre as áreas que mais rendem */
+  divisao: { area: string; extras: number }[];
+}
+
+/**
+ * A área que mais puxa a nota para baixo nas últimas provas (peso = nº de questões)
+ * e quantos acertos a mais ela precisa para a nota geral subir 5 pontos.
+ */
+export function focoDaSemana(d: Diagnostico, subir = 5): FocoSemana | null {
+  if (d.pctRecente === null || d.areas.length === 0 || d.totalQuestoes === 0) return null;
+  const geral = d.pctRecente;
+  // a área que mais te afasta das SUAS metas (já pesa nº de questões); se todas já bateram,
+  // a que mais puxa a nota para baixo: (pct da área − pct geral) × questões
+  const pior =
+    d.areas.find((a) => a.ganho > 0 && a.questoes > 0) ??
+    [...d.areas]
+      .filter((a) => a.questoes > 0)
+      .sort((a, b) => (a.pctRecente - geral) * a.questoes - (b.pctRecente - geral) * b.questoes)[0];
+  if (!pior) return null;
+  const extras = Math.ceil((subir / 100) * d.totalQuestoes);
+  const acertosHoje = (pior.pctRecente / 100) * pior.questoes;
+  const cabe = pior.questoes - acertosHoje >= extras;
+
+  // divisão entre as áreas com mais a ganhar (proporcional ao que cada uma pode render)
+  const candidatas = d.areas.filter((a) => a.ganho > 0).slice(0, 3);
+  const somaGanho = soma(candidatas.map((a) => a.ganho));
+  let divisao = candidatas.map((a) => ({ area: a.area, extras: somaGanho ? Math.round((a.ganho / somaGanho) * extras) : 0 }));
+  const dif = extras - soma(divisao.map((x) => x.extras));
+  if (divisao[0]) divisao[0].extras += dif;
+  divisao = divisao.filter((x) => x.extras > 0);
+
+  return {
+    area: pior.area,
+    pctArea: pior.pctRecente,
+    abaixo: arred1(geral - pior.pctRecente),
+    acertosHoje: arred1(acertosHoje),
+    questoes: pior.questoes,
+    extras,
+    cabe,
+    divisao,
+  };
+}
+
+/* ======================================================================
+ * Caderno de erros: motivos e temas (Pareto)
+ * ====================================================================== */
+
+export const MOTIVOS = [
+  { id: "base", texto: "Falta de base teórica", dica: "revise a teoria dos temas que mais erra (resumo + questões do tema)" },
+  { id: "atencao", texto: "Desatenção / leitura do enunciado", dica: "leia a pergunta final antes do caso e marque palavras como EXCETO, INCORRETA, MAIS PROVÁVEL" },
+  { id: "imagem", texto: "Imagem ou exame complementar", dica: "treine com banco de imagens: ECG, raio-x, dermato, partograma" },
+  { id: "duvida", texto: "Dúvida entre 2 alternativas", dica: "anote o que diferencia as duas opções e transforme em flashcard de diagnóstico diferencial" },
+  { id: "memoria", texto: "Sabia, mas esqueci", dica: "passe para o Anki e revise espaçado" },
+  { id: "outro", texto: "Outro motivo", dica: "" },
+] as const;
+export type MotivoId = (typeof MOTIVOS)[number]["id"];
+export const MOTIVO_TEXTO: Record<string, string> = Object.fromEntries(MOTIVOS.map((m) => [m.id, m.texto]));
+
+export interface ErroReg {
+  id: number;
+  prova_id: number | null;
+  area: string;
+  tema: string;
+  motivo: string;
+  anotacao: string;
+  numero: number | null;
+  card: boolean;
+}
+
+export interface BarraPareto {
+  chave: string;
+  texto: string;
+  n: number;
+  pct: number;
+  acumulado: number;
+}
+
+/** Contagem do maior para o menor, com % acumulado (os poucos que causam a maioria). */
+export function pareto(itens: string[], rotulo: (k: string) => string = (k) => k): BarraPareto[] {
+  const cont = new Map<string, number>();
+  for (const k of itens) if (k) cont.set(k, (cont.get(k) ?? 0) + 1);
+  const total = itens.filter(Boolean).length;
+  let acc = 0;
+  return [...cont.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "pt-BR"))
+    .map(([k, n]) => {
+      acc += n;
+      return { chave: k, texto: rotulo(k), n, pct: arred1((n / total) * 100), acumulado: arred1((acc / total) * 100) };
+    });
+}
+
+/** "  Pré-eclâmpsia " e "pré-eclâmpsia" contam como o mesmo tema. */
+export function chaveTema(t: string): string {
+  return t.trim().replace(/\s+/g, " ").toLocaleLowerCase("pt-BR");
+}
+
+/** Linhas para a planilha (CSV, separado por ";" para abrir direto no Excel em português). */
+export function csvProvas(provas: Prova[], areas: Area[]): string {
+  const esc = (v: unknown) => {
+    const s = String(v ?? "");
+    return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const cab = ["banca", "ano", "data", "acertos", "total", "percentual"];
+  for (const a of AREAS) cab.push(`${a} acertos`, `${a} total`, `${a} status`, `${a} erros estudados`);
+  const linhas = [cab.map(esc).join(";")];
+  for (const p of [...provas].sort((a, b) => dataMs(a.data_feita) - dataMs(b.data_feita))) {
+    const ap = areas.filter((a) => a.prova_id === p.id);
+    const v = pct(p.acertos, p.total_questoes);
+    const lin: unknown[] = [p.banca, p.ano, p.data_feita ?? "", p.acertos, p.total_questoes, v === null ? "" : String(v).replace(".", ",")];
+    for (const ar of AREAS) {
+      const a = ap.find((x) => x.area === ar);
+      lin.push(a?.acertos ?? "", a?.total ?? "", a ? STATUS_LABEL[a.status as Status] ?? a.status : "", a ? (a.estudada ? "sim" : "não") : "");
+    }
+    linhas.push(lin.map(esc).join(";"));
+  }
+  return linhas.join("\n");
+}

@@ -2,6 +2,7 @@
 
 import { Aviso, Card, Info, Metrica, Secao, Tabela, corFaixa } from "./comum";
 import { GraficoAreas, GraficoBancas, GraficoEvolucao } from "./graficos";
+import { DesempenhoPorArea, EvolucaoPorArea } from "./provas";
 import {
   agregarPorArea,
   BANCA_FOCO,
@@ -79,26 +80,16 @@ export default function Dashboard({ provas, areas, meta }: { provas: Prova[]; ar
         </Card>
       </Secao>
 
-      <div className="grid gap-x-6 lg:grid-cols-2">
-        <Secao titulo="Desempenho por grande área" sub="Considera todas as áreas com nota (mesmo de provas incompletas).">
-          {porArea.length ? (
-            <Card>
-              <GraficoAreas dados={porArea} meta={meta} />
-              <Aviso>
-                <b>Área prioritária: {porArea[0]!.area}</b>: apenas {fmtPct(porArea[0]!.pct)} de acerto.
-              </Aviso>
-            </Card>
-          ) : (
-            <Info>Corrija ao menos uma área para ver este gráfico.</Info>
-          )}
-        </Secao>
-
+      <div>
         <Secao titulo="Desempenho por banca" sub="Média das provas completas de cada banca.">
           <Card>
             <GraficoBancas dados={porBanca} meta={meta} />
           </Card>
         </Secao>
       </div>
+
+      <DesempenhoPorArea provas={provas} areas={areas} meta={meta} soFoco={false} />
+      <EvolucaoPorArea provas={provas} areas={areas} meta={meta} />
 
       <EstudoErros areas={areas} />
     </div>

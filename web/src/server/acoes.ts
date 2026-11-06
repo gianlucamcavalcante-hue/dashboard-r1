@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { AREAS, validarPlano, type PlanoFoco } from "@/lib/calc";
+import { AREAS, MOTIVOS, validarPlano, type PlanoFoco } from "@/lib/calc";
 import { exigirSessao } from "./sessao";
 import {
   atualizarAreasDb,
@@ -10,6 +10,9 @@ import {
   salvarMetaDb,
   salvarDataProvaDb,
   salvarPlanoFocoDb,
+  inserirErroDb,
+  excluirErroDb,
+  marcarCardDb,
   validarAreas,
   type AreaEntrada,
 } from "./db";
@@ -96,4 +99,43 @@ export async function salvarPlanoFoco(plano: PlanoFoco): Promise<Resultado> {
   const erro = validarPlano(limpo);
   if (erro) return { ok: false, erro };
   return executar(() => salvarPlanoFocoDb(JSON.stringify(limpo)));
+}
+
+/* ---------------- caderno de erros ---------------- */
+
+export async function adicionarErro(dados: {
+  prova_id: number | null;
+  area: string;
+  tema: string;
+  motivo: string;
+  anotacao: string;
+  numero: number | null;
+}): Promise<Resultado> {
+  const area = String(dados.area ?? "");
+  const tema = String(dados.tema ?? "").trim().replace(/\s+/g, " ");
+  const motivo = String(dados.motivo ?? "");
+  const anotacao = String(dados.anotacao ?? "").trim();
+  const prova = dados.prova_id === null || dados.prova_id === undefined ? null : Number(dados.prova_id);
+  const numero = dados.numero === null || dados.numero === undefined ? null : Number(dados.numero);
+  if (!(AREAS as readonly string[]).includes(area)) return { ok: false, erro: "Escolha a área." };
+  if (!tema) return { ok: false, erro: "Escreva o tema da questão (ex.: pré-eclâmpsia)." };
+  if (tema.length > 120) return { ok: false, erro: "Tema muito longo: resuma em poucas palavras." };
+  if (!MOTIVOS.some((m) => m.id === motivo)) return { ok: false, erro: "Escolha o motivo do erro." };
+  if (anotacao.length > 1000) return { ok: false, erro: "Anotação muito longa." };
+  if (prova !== null && !Number.isInteger(prova)) return { ok: false, erro: "Prova inválida." };
+  if (numero !== null && (!Number.isInteger(numero) || numero < 1 || numero > 300))
+    return { ok: false, erro: "Número da questão inválido." };
+  return executar(() => inserirErroDb({ prova_id: prova, area, tema, motivo, anotacao, numero }));
+}
+
+export async function excluirErro(id: number): Promise<Resultado> {
+  const n = Number(id);
+  if (!Number.isInteger(n)) return { ok: false, erro: "Registro inválido." };
+  return executar(() => excluirErroDb(n));
+}
+
+export async function marcarCard(id: number, card: boolean): Promise<Resultado> {
+  const n = Number(id);
+  if (!Number.isInteger(n)) return { ok: false, erro: "Registro inválido." };
+  return executar(() => marcarCardDb(n, Boolean(card)));
 }

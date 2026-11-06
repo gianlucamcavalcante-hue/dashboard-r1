@@ -206,3 +206,70 @@ describe("diagnóstico USP-SP", () => {
     expect(diasAte(null)).toBeNull();
   });
 });
+
+import { consistencia, csvProvas, focoDaSemana, mapaCalor, pareto, chaveTema, serieTempo } from "../calc";
+
+describe("análises avançadas", () => {
+  // 3 provas USP-SP: Obstetrícia oscila muito; Preventiva alta e estável; Cirurgia baixa e estável
+  const ps: Prova[] = [1, 2, 3].map((i) => ({
+    id: 200 + i, banca: "USP-SP", ano: 2018 + i, data_feita: `2026-0${i}-01`, total_questoes: 0, acertos: 0,
+  }));
+  const notas: Record<string, number[]> = {
+    "Clínica Médica": [12, 12, 13], Cirurgia: [10, 10, 11], Pediatria: [14, 14, 14],
+    Ginecologia: [6, 6, 6], Obstetrícia: [3, 10, 5], Preventiva: [18, 19, 18],
+  };
+  const as: Area[] = ps.flatMap((p, k) =>
+    AREAS.map((area) => {
+      const total = area === "Ginecologia" || area === "Obstetrícia" ? 10 : 20;
+      return { id: idArea++, prova_id: p.id, area, acertos: notas[area]![k]!, total, status: "feita", estudada: true };
+    }),
+  );
+  for (const p of ps) {
+    const ap = as.filter((a) => a.prova_id === p.id);
+    p.total_questoes = ap.reduce((s, a) => s + a.total, 0);
+    p.acertos = ap.reduce((s, a) => s + a.acertos, 0);
+  }
+
+  it("classifica consistência", () => {
+    const c = consistencia(ps, as);
+    expect(c.find((x) => x.area === "Obstetrícia")!.perfil).toBe("volatil");
+    expect(c.find((x) => x.area === "Preventiva")!.perfil).toBe("pilar");
+    expect(c.find((x) => x.area === "Cirurgia")!.perfil).toBe("base");
+    expect(c.find((x) => x.area === "Obstetrícia")!.pontosPorQuestao).toBe(10);
+  });
+
+  it("média móvel de 3", () => {
+    const s = serieTempo(ps, as);
+    expect(s).toHaveLength(3);
+    expect(s[2]!.movel).toBeCloseTo((s[0]!.pct + s[1]!.pct + s[2]!.pct) / 3, 0);
+  });
+
+  it("mapa de calor em ordem de data", () => {
+    const m = mapaCalor(ps, as);
+    expect(m[0]!.prova.id).toBe(201);
+    expect(m[0]!.celulas.find((c) => c.area === "Obstetrícia")!.pct).toBe(30);
+  });
+
+  it("foco da semana: área que mais puxa para baixo e acertos para +5 pts", () => {
+    const d = diagnostico(ps, as, planoPadrao(80))!;
+    const f = focoDaSemana(d)!;
+    expect(f.area).toBe("Cirurgia"); // 51,7% com 20 questões pesa mais que Obstetrícia (60%, 10 questões)
+    expect(f.extras).toBe(5);
+    expect(f.cabe).toBe(true);
+    expect(f.divisao.reduce((s, x) => s + x.extras, 0)).toBe(5);
+  });
+
+  it("pareto e temas", () => {
+    const p = pareto(["a", "b", "a", "c", "a", "b"]);
+    expect(p.map((x) => x.chave)).toEqual(["a", "b", "c"]);
+    expect(p[0]!.acumulado).toBe(50);
+    expect(p[2]!.acumulado).toBe(100);
+    expect(chaveTema("  Pré-Eclâmpsia ")).toBe("pré-eclâmpsia");
+  });
+
+  it("planilha CSV", () => {
+    const csv = csvProvas(ps, as);
+    expect(csv.split("\n")).toHaveLength(4);
+    expect(csv.split("\n")[0]).toContain("Obstetrícia acertos");
+  });
+});

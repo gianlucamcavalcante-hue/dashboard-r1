@@ -5,10 +5,11 @@ import { Botao, TemaCtx, useTemaEstado } from "./comum";
 import Dashboard from "./dashboard";
 import Provas from "./provas";
 import DiagnosticoFoco from "./foco";
+import CadernoErros from "./erros";
 import { salvarMeta } from "@/server/acoes";
-import { BANCA_FOCO, type Area, type PlanoFoco, type Prova } from "@/lib/calc";
+import { BANCA_FOCO, type Area, type ErroReg, type PlanoFoco, type Prova } from "@/lib/calc";
 
-type Aba = "dashboard" | "provas";
+type Aba = "dashboard" | "provas" | "erros";
 type Foco = "usp" | "todas";
 
 export default function Painel({
@@ -17,6 +18,7 @@ export default function Painel({
   meta,
   plano,
   planoSalvo,
+  erros,
   dataProva,
   comSenha,
 }: {
@@ -25,6 +27,7 @@ export default function Painel({
   meta: number;
   plano: PlanoFoco;
   planoSalvo: boolean;
+  erros: ErroReg[];
   dataProva: string | null;
   comSenha: boolean;
 }) {
@@ -37,7 +40,7 @@ export default function Painel({
   useEffect(() => {
     try {
       const a = localStorage.getItem("aba");
-      if (a === "provas" || a === "dashboard") setAba(a);
+      if (a === "provas" || a === "dashboard" || a === "erros") setAba(a);
       const f = localStorage.getItem("foco");
       if (f === "usp" || f === "todas") setFoco(f);
     } catch {
@@ -128,11 +131,12 @@ export default function Painel({
           </span>
         </div>
 
-        <nav className="mt-5 flex gap-1 border-b border-border" role="tablist">
+        <nav className="mt-5 flex gap-1 overflow-x-auto border-b border-border" role="tablist">
           {(
             [
-              ["dashboard", "📊 Dashboard"],
+              ["dashboard", "📊 Painel"],
               ["provas", "📋 Provas"],
+              ["erros", "📓 Caderno de erros"],
             ] as const
           ).map(([id, texto]) => (
             <button
@@ -140,7 +144,7 @@ export default function Painel({
               role="tab"
               aria-selected={aba === id}
               onClick={() => trocarAba(id)}
-              className={`-mb-px border-b-2 px-4 py-2.5 text-sm font-medium transition ${
+              className={`-mb-px whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium transition sm:px-4 ${
                 aba === id ? "border-accent text-text" : "border-transparent text-muted hover:text-text"
               }`}
             >
@@ -160,12 +164,23 @@ export default function Painel({
                 dataProva={dataProva}
                 planoAberto={planoAberto}
                 setPlanoAberto={setPlanoAberto}
+                erros={erros}
+                irParaErros={() => trocarAba("erros")}
               />
             ) : (
               <Dashboard provas={provas} areas={areas} meta={meta} />
             )
-          ) : (
+          ) : aba === "provas" ? (
             <Provas provas={provas} areas={areas} meta={meta} soFoco={foco === "usp"} />
+          ) : (
+            <CadernoErros
+              provas={provas}
+              erros={
+                foco === "usp"
+                  ? erros.filter((e) => e.prova_id === null || provas.find((p) => p.id === e.prova_id)?.banca === BANCA_FOCO)
+                  : erros
+              }
+            />
           )}
         </main>
       </div>

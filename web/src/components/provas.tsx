@@ -26,6 +26,7 @@ import {
   BANCA_FOCO,
   FIZ,
   filtrarBanca,
+  csvProvas,
   NAO_FIZ,
   STATUS_LABEL,
   agregarPorArea,
@@ -62,23 +63,41 @@ export default function Provas({
   meta: number;
   soFoco?: boolean;
 }) {
-  // no modo foco, lista e gráficos usam só a USP-SP; atualizar/excluir/adicionar continuam com todas
+  // no modo foco, a lista usa só a USP-SP; atualizar/excluir/lançar continuam com todas
   const an = soFoco ? filtrarBanca(provas, areas, BANCA_FOCO) : { provas, areas };
+  const [lancando, setLancando] = useState(provas.length === 0);
+
+  const baixarCsv = () => {
+    const csv = "\uFEFF" + csvProvas(provas, areas); // \uFEFF: acentos certos no Excel
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `provas-r1-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div>
-      {soFoco && (
-        <p className="mb-4 text-xs text-muted">
-          Mostrando só as provas da {BANCA_FOCO}. Para ver todas, escolha &quot;Todas as provas&quot; lá em cima.
-        </p>
-      )}
+      <div className="mb-5 flex flex-wrap items-center gap-2">
+        <Botao onClick={() => setLancando((v) => !v)}>{lancando ? "Fechar formulário" : "➕ Lançar nova prova"}</Botao>
+        {provas.length > 0 && (
+          <Botao tipo="secundario" onClick={baixarCsv}>
+            ⬇️ Baixar planilha (CSV)
+          </Botao>
+        )}
+        {soFoco && (
+          <span className="text-xs text-muted">
+            Lista com só as provas da {BANCA_FOCO}. Para ver todas, escolha &quot;Todas as provas&quot; lá em cima.
+          </span>
+        )}
+      </div>
+      {lancando && <NovaProva provas={provas} meta={meta} aoSalvar={() => setLancando(false)} />}
+
       {provas.length > 0 ? (
         <>
           {an.provas.length > 0 ? (
-            <>
-              <ListaProvas key={soFoco ? "foco" : "todas"} provas={an.provas} areas={an.areas} />
-              <DesempenhoPorArea provas={an.provas} areas={an.areas} meta={meta} soFoco={soFoco} />
-              <EvolucaoPorArea provas={an.provas} areas={an.areas} meta={meta} />
-            </>
+            <ListaProvas key={soFoco ? "foco" : "todas"} provas={an.provas} areas={an.areas} />
           ) : (
             <Info>Nenhuma prova da {BANCA_FOCO} cadastrada ainda.</Info>
           )}
@@ -88,9 +107,8 @@ export default function Provas({
           </div>
         </>
       ) : (
-        <Info>Nenhuma prova cadastrada ainda. Adicione abaixo. 👇</Info>
+        <Info>Nenhuma prova cadastrada ainda. Use &quot;Lançar nova prova&quot;.</Info>
       )}
-      <NovaProva provas={provas} meta={meta} />
     </div>
   );
 }
@@ -170,7 +188,7 @@ function ListaProvas({ provas, areas }: { provas: Prova[]; areas: Area[] }) {
 
 /* ---------------- desempenho por área (todas ou uma prova) ---------------- */
 
-function DesempenhoPorArea({
+export function DesempenhoPorArea({
   provas,
   areas,
   meta,
@@ -261,7 +279,7 @@ function AreasDaProva({ ap, meta }: { ap: Area[]; meta: number }) {
 
 /* ---------------- evolução de uma área ---------------- */
 
-function EvolucaoPorArea({ provas, areas, meta }: { provas: Prova[]; areas: Area[]; meta: number }) {
+export function EvolucaoPorArea({ provas, areas, meta }: { provas: Prova[]; areas: Area[]; meta: number }) {
   const [area, setArea] = useState<string>(AREAS[0]);
   const pontos = evolucaoDaArea(area, areas, provas);
   const tend = tendencia(pontos);
@@ -397,7 +415,7 @@ function hojeISO() {
   return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`;
 }
 
-function NovaProva({ provas, meta }: { provas: Prova[]; meta: number }) {
+function NovaProva({ provas, meta, aoSalvar }: { provas: Prova[]; meta: number; aoSalvar?: () => void }) {
   const [banca, setBanca] = useState("");
   const [ano, setAno] = useState(String(new Date().getFullYear()));
   const [data, setData] = useState(hojeISO);
@@ -417,13 +435,14 @@ function NovaProva({ provas, meta }: { provas: Prova[]; meta: number }) {
         setMsg({ tipo: "ok", texto: "Prova salva!" });
         setBanca("");
         setLinhas(linhasVazias());
+        aoSalvar?.();
       } else setMsg({ tipo: "erro", texto: r.erro });
     });
   };
 
   return (
     <Secao
-      titulo="➕ Adicionar nova prova"
+      titulo="➕ Lançar nova prova"
       sub={
         <>
           Para cada área marque <b>Fiz</b> (preencha acertos e total: o % sai na hora) ou <b>Não fiz</b>. O estudo dos
