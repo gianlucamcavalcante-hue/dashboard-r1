@@ -325,7 +325,7 @@ export function GraficoRadar({ dados }: { dados: { area: string; atual: number; 
           <PolarAngleAxis dataKey="area" tickFormatter={(v: string) => curto[v] ?? v} tick={{ fill: c.texto, fontSize: 12 }} />
           <PolarRadiusAxis domain={[0, 100]} tickCount={6} tick={{ fill: c.muted, fontSize: 10 }} axisLine={false} angle={90} />
           <Radar name="Sua meta" dataKey="meta" stroke={AMARELO} strokeDasharray="5 4" fill={AMARELO} fillOpacity={0.08} isAnimationActive={false} />
-          <Radar name="Fase atual" dataKey="atual" stroke={MARINHO} strokeWidth={2.5} fill={MARINHO} fillOpacity={0.28} isAnimationActive={false} />
+          <Radar name="No período" dataKey="atual" stroke={MARINHO} strokeWidth={2.5} fill={MARINHO} fillOpacity={0.28} isAnimationActive={false} />
           <Legend wrapperStyle={{ fontSize: 12, color: c.muted }} />
           <Tooltip
             content={({ active, payload }) => {
@@ -335,7 +335,7 @@ export function GraficoRadar({ dados }: { dados: { area: string; atual: number; 
                 <Caixa>
                   <div className="font-semibold">{p.area}</div>
                   <div className="num">
-                    fase atual {fmtPct(p.atual)} · meta {p.meta}%
+                    no período {fmtPct(p.atual)} · meta {p.meta}%
                   </div>
                 </Caixa>
               );
@@ -363,6 +363,15 @@ export function GraficoTempo({ pontos, meta, modo }: { pontos: PontoTempo[]; met
         <ComposedChart data={dados} margin={{ top: 10, right: 16, bottom: 0, left: -12 }}>
           <CartesianGrid stroke={c.grade} vertical={false} />
           <ReferenceArea y1={meta} y2={100} fill={VERDE_FAIXA} fillOpacity={0.08} ifOverflow="hidden" />
+          {modo === "ordem" && dados.some((p) => !p.dentro) && dados.some((p) => p.dentro) && (
+            <ReferenceArea
+              x1={dados.find((p) => p.dentro)!.t - folga / 2}
+              x2={max + folga}
+              fill={MARINHO}
+              fillOpacity={0.07}
+              ifOverflow="hidden"
+            />
+          )}
           <XAxis
             dataKey={x}
             type="number"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, type ReactNode } from "react";
+import { useEffect, useState, useTransition, type ReactNode } from "react";
 import { AMARELO, Botao, Card, Chip, Info, MARINHO, Metrica, Secao, VERDE, classeCampo, corFaixa } from "./comum";
 import { GraficoRadar, GraficoTempo } from "./graficos";
 import { EstudoErros } from "./dashboard";
@@ -18,6 +18,7 @@ import {
   dataBR,
   diagnostico,
   diasAte,
+  idsJanela,
   faixa,
   filtrarBanca,
   fmtNum1,
@@ -34,6 +35,7 @@ import {
   type DiagArea,
   type Diagnostico,
   type ErroReg,
+  type Janela,
   type Perfil,
   type PlanoFoco,
   type Prova,
@@ -65,7 +67,26 @@ export default function DiagnosticoFoco({
   irParaErros: () => void;
 }) {
   const [modoTempo, setModoTempo] = useState<"ordem" | "ano">("ordem");
-  const d = diagnostico(provas, areas, plano);
+  const [janela, setJanelaSt] = useState<Janela>(N_RECENTES);
+  // lembra o período escolhido neste aparelho
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem("janelaFoco");
+      if (v === "todas") setJanelaSt(null);
+      else if (v && Number(v) >= 1) setJanelaSt(Number(v));
+    } catch {
+      /* sem armazenamento */
+    }
+  }, []);
+  const setJanela = (j: Janela) => {
+    setJanelaSt(j);
+    try {
+      localStorage.setItem("janelaFoco", j === null ? "todas" : String(j));
+    } catch {
+      /* sem armazenamento */
+    }
+  };
+  const d = diagnostico(provas, areas, plano, BANCA_FOCO, janela);
   const foco = filtrarBanca(provas, areas, BANCA_FOCO);
 
   if (!d) {
@@ -73,8 +94,8 @@ export default function DiagnosticoFoco({
   }
 
   const metaGeral = Math.round(d.metaPct);
-  const cons = consistencia(provas, areas);
-  const tempo = serieTempo(provas, areas);
+  const cons = consistencia(provas, areas, BANCA_FOCO, janela);
+  const tempo = serieTempo(provas, areas, BANCA_FOCO, 3, janela);
   const idsFoco = new Set(foco.provas.map((p) => p.id));
   const errosFoco = erros.filter((e) => e.prova_id === null || idsFoco.has(e.prova_id));
 
@@ -105,20 +126,22 @@ export default function DiagnosticoFoco({
         </button>
       )}
 
+      <Periodo provas={provas} areas={areas} janela={janela} setJanela={setJanela} total={d.nCompletas} />
+
       <Kpis d={d} cons={cons} />
       <Conquistas d={d} />
 
       <FocoSemana d={d} erros={errosFoco} irParaErros={irParaErros} />
 
       <div className="grid gap-x-6 lg:grid-cols-2">
-        <Secao titulo="🕸️ Equilíbrio entre as áreas" sub="Azul = sua fase atual (últimas 3 provas). Tracejado dourado = suas metas.">
+        <Secao titulo="🕸️ Equilíbrio entre as áreas" sub={`Azul = sua nota no período escolhido (${rotuloJanela(d.janelaN, d.nCompletas)}). Tracejado dourado = suas metas.`}>
           <Card>
             <GraficoRadar dados={d.areas.map((a) => ({ area: a.area, atual: a.pctRecente, meta: a.meta })).sort((a, b) => AREAS.indexOf(a.area as never) - AREAS.indexOf(b.area as never))} />
           </Card>
         </Secao>
-        <Secao titulo="📏 Consistência" sub="Barra = da sua pior à sua melhor nota na área. Ponto = média. Traço dourado = meta.">
+        <Secao titulo="📏 Consistência" sub={`No período escolhido (${rotuloJanela(d.janelaN, d.nCompletas)}). Barra = da sua pior à sua melhor nota na área. Ponto = média. Traço dourado = meta.`}>
           <Card>
-            <Consistencias cons={cons} metas={plano.metas} />
+            <Consistencias cons={cons} metas={plano.metas} poucas={d.janelaN < 3} />
           </Card>
         </Secao>
       </div>
@@ -153,12 +176,74 @@ export default function DiagnosticoFoco({
       >
         <Card>
           {tempo.length ? <GraficoTempo pontos={tempo} meta={metaGeral} modo={modoTempo} /> : <p className="text-sm text-muted">Sem provas completas ainda.</p>}
+          {janela !== null && tempo.length > d.janelaN && (
+            <p className="mt-2 text-xs text-muted">O gráfico mostra todo o histórico; a faixa azul clara marca o período que você escolheu analisar.</p>
+          )}
         </Card>
       </Secao>
 
-      <MapaCalor provas={provas} areas={areas} metas={plano.metas} />
+      <MapaCalor provas={provas} areas={areas} metas={plano.metas} janela={janela} />
 
       <EstudoErros areas={foco.areas} />
+    </div>
+  );
+}
+
+/** "últimas 3" / "todas as 6" */
+function rotuloJanela(n: number, total: number): string {
+  if (n >= total) return total === 1 ? "sua única prova" : `todas as ${total} provas`;
+  return n === 1 ? "última prova" : `últimas ${n} provas`;
+}
+
+/** Escolha do período: só as provas mais recentes, que representam melhor como você está hoje. */
+function Periodo({
+  provas,
+  areas,
+  janela,
+  setJanela,
+  total,
+}: {
+  provas: Prova[];
+  areas: Area[];
+  janela: Janela;
+  setJanela: (j: Janela) => void;
+  total: number;
+}) {
+  if (total < 2) return null;
+  const opcoes: { valor: Janela; texto: string }[] = [2, 3, 4, 5]
+    .filter((n) => n < total)
+    .map((n) => ({ valor: n, texto: `Últimas ${n}` }));
+  opcoes.push({ valor: null, texto: `Todas (${total})` });
+  const atual = janela !== null && janela >= total ? null : janela;
+  const ids = idsJanela(provas, areas, atual);
+  const usadas = provas
+    .filter((p) => ids.has(p.id))
+    .sort((a, b) => (a.data_feita ?? "").localeCompare(b.data_feita ?? ""));
+  const de = usadas[0];
+  const ate = usadas[usadas.length - 1];
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+      <span className="text-sm font-medium">Analisar:</span>
+      <div className="inline-flex flex-wrap rounded-xl border border-border bg-card p-1" role="radiogroup" aria-label="Período analisado">
+        {opcoes.map((o) => (
+          <button
+            key={String(o.valor)}
+            role="radio"
+            aria-checked={atual === o.valor}
+            onClick={() => setJanela(o.valor)}
+            className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+              atual === o.valor ? "bg-accent text-white shadow-sm" : "text-muted hover:text-text"
+            }`}
+          >
+            {o.texto}
+          </button>
+        ))}
+      </div>
+      {de && ate && (
+        <span className="text-xs text-muted">
+          {usadas.map((p) => p.ano).join(", ")} · feitas de {mesAno(de.data_feita)} a {mesAno(ate.data_feita)}
+        </span>
+      )}
     </div>
   );
 }
@@ -167,7 +252,7 @@ function Seta({ v }: { v: number | null }) {
   if (v === null) return <span className="text-xs text-faint">—</span>;
   const cls = v >= 1 ? "text-pos" : "text-muted";
   return (
-    <span className={`num whitespace-nowrap text-xs font-medium ${cls}`} title="Fase atual comparada com as provas anteriores">
+    <span className={`num whitespace-nowrap text-xs font-medium ${cls}`} title="Período escolhido comparado com as provas de antes dele">
       {v >= 1 ? "▲" : v <= -1 ? "▼" : "="} {fmtSinal(v)} pts
     </span>
   );
@@ -191,7 +276,7 @@ function Kpis({ d, cons }: { d: Diagnostico; cons: Consistencia[] }) {
     <>
       <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Metrica
-          rotulo="Média recente"
+          rotulo={`Média · ${rotuloJanela(d.janelaN, d.nCompletas)}`}
           valor={d.pctRecente === null ? "—" : fmtPct(d.pctRecente)}
           detalhe={
             <>
@@ -199,7 +284,13 @@ function Kpis({ d, cons }: { d: Diagnostico; cons: Consistencia[] }) {
               {d.tendencia !== null && d.tendencia >= 1 ? (
                 <span className="text-pos">▲ {fmtSinal(d.tendencia)} pts vs provas anteriores</span>
               ) : (
-                <span>últimas {N_RECENTES} provas</span>
+                <span>
+                  {d.janelaN >= d.nCompletas
+                    ? "todas as suas provas"
+                    : d.janelaN === 1
+                      ? "só a última prova"
+                      : `${d.janelaN} provas mais recentes`}
+                </span>
               )}
             </>
           }
@@ -229,7 +320,7 @@ function Kpis({ d, cons }: { d: Diagnostico; cons: Consistencia[] }) {
           detalhe={
             forte ? (
               <>
-                <span className="num block">{fmtPct(forte.pctRecente)} na fase atual</span>
+                <span className="num block">{fmtPct(forte.pctRecente)} no período</span>
                 {forteCons?.perfil === "pilar" && <span className="text-pos">pilar seguro: oscila pouco</span>}
               </>
             ) : undefined
@@ -250,8 +341,7 @@ function Kpis({ d, cons }: { d: Diagnostico; cons: Consistencia[] }) {
         />
       </div>
       <p className="mt-2 text-xs text-muted">
-        Só provas da {BANCA_FOCO}, convertidas para a prova deste ano ({T} questões). &quot;Recente&quot; = suas{" "}
-        {N_RECENTES} provas mais recentes.
+        Só provas da {BANCA_FOCO}, no período escolhido acima, convertidas para a prova deste ano ({T} questões).
       </p>
     </>
   );
@@ -315,7 +405,7 @@ function FocoSemana({ d, erros, irParaErros }: { d: Diagnostico; erros: ErroReg[
               Esta semana: <span className="text-accent">{f.area}</span>
             </div>
             <p className="mt-1.5 text-sm leading-relaxed">
-              É a área que mais te afasta da sua meta. Nas últimas {N_RECENTES} provas ficou em{" "}
+              É a área que mais te afasta da sua meta. {d.janelaN === d.nCompletas ? "No total das suas provas" : `Nas últimas ${d.janelaN} provas`} ficou em{" "}
               <b>{fmtPct(f.pctArea)}</b>, ou ≈ {Math.round(f.acertosHoje)} de {f.questoes} na prova de {d.totalQuestoes}
               {f.abaixo > 0 && <>, {fmtNum1(f.abaixo)} pts abaixo da sua média geral</>}.
             </p>
@@ -442,7 +532,7 @@ function proximosPassos(d: Diagnostico): ReactNode[] {
 
 const COR_PERFIL: Record<Perfil, string> = { pilar: VERDE, volatil: AMARELO, base: "#64748b", evolucao: MARINHO };
 
-function Consistencias({ cons, metas }: { cons: Consistencia[]; metas: Record<string, number> }) {
+function Consistencias({ cons, metas, poucas }: { cons: Consistencia[]; metas: Record<string, number>; poucas: boolean }) {
   const pequenas = cons.filter((c) => c.pontosPorQuestao >= 8).map((c) => c.area);
   return (
     <div>
@@ -482,7 +572,8 @@ function Consistencias({ cons, metas }: { cons: Consistencia[]; metas: Record<st
             média.{" "}
           </>
         )}
-        O painel não sabe quantas horas você estuda cada área; quem decide o esforço são as suas metas por área.
+        {poucas && <>Com só 2 provas no período, a oscilação é apenas uma pista. </>}O painel não sabe quantas horas você
+        estuda cada área; quem decide o esforço são as suas metas por área.
       </p>
     </div>
   );
@@ -499,8 +590,18 @@ const CURTO: Record<string, string> = {
   Preventiva: "Prevent.",
 };
 
-function MapaCalor({ provas, areas, metas }: { provas: Prova[]; areas: Area[]; metas: Record<string, number> }) {
-  const linhas = mapaCalor(provas, areas);
+function MapaCalor({
+  provas,
+  areas,
+  metas,
+  janela,
+}: {
+  provas: Prova[];
+  areas: Area[];
+  metas: Record<string, number>;
+  janela: Janela;
+}) {
+  const linhas = mapaCalor(provas, areas, BANCA_FOCO, janela);
   if (!linhas.length) return null;
   const fundo = (v: number | null) =>
     v === null ? "transparent" : `rgba(58,106,165,${(0.1 + (v / 100) * 0.8).toFixed(2)})`;
@@ -529,10 +630,13 @@ function MapaCalor({ provas, areas, metas }: { provas: Prova[]; areas: Area[]; m
           </thead>
           <tbody>
             {linhas.map((l) => (
-              <tr key={l.prova.id} className="border-b border-border last:border-0">
+              <tr key={l.prova.id} className={`border-b border-border last:border-0 ${l.dentro ? "" : "opacity-35"}`}>
                 <td className="whitespace-nowrap px-3 py-2">
                   <div className="font-medium">{l.prova.ano}</div>
-                  <div className="text-xs text-muted">feita {mesAno(l.prova.data_feita)}</div>
+                  <div className="text-xs text-muted">
+                    feita {mesAno(l.prova.data_feita)}
+                    {!l.dentro && " · fora do período"}
+                  </div>
                 </td>
                 {l.celulas.map((c) => (
                   <td key={c.area} className="p-1">
@@ -569,7 +673,7 @@ function Prioridades({ d }: { d: Diagnostico }) {
         <div className="hidden grid-cols-[1.6rem_8.5rem_1fr_5.5rem_5.5rem_7.5rem] items-center gap-3 border-b border-border px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted md:grid">
           <span>#</span>
           <span>Área</span>
-          <span>Fase atual × sua meta</span>
+          <span>No período × sua meta</span>
           <span className="text-right">Meta</span>
           <span className="text-right">Tendência</span>
           <span className="text-right">A ganhar</span>

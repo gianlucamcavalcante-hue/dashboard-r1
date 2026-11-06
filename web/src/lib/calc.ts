@@ -377,6 +377,18 @@ export function nomeProva(p: Prova): string {
 /** Quantas provas mais recentes contam como "fase atual". */
 export const N_RECENTES = 3;
 
+/** Quantas provas mais recentes analisar (null = todas). */
+export type Janela = number | null;
+
+/** Ids das últimas N provas completas da banca, pela data em que foram feitas. */
+export function idsJanela(provas: Prova[], areas: Area[], janela: Janela, banca = BANCA_FOCO): Set<number> {
+  const f = filtrarBanca(provas, areas, banca);
+  const comp = provasCompletas(f.provas, f.areas).sort(
+    (a, b) => dataMs(a.data_feita) - dataMs(b.data_feita) || a.id - b.id,
+  );
+  return new Set(comp.slice(-(janela ?? Infinity)).map((p) => p.id));
+}
+
 /**
  * Plano para a prova-alvo: meta (%) e número de questões de cada área.
  * A USP-SP deste ano terá 100 questões; o padrão divide como nas provas antigas (20/20/20/10/10/20).
@@ -447,6 +459,8 @@ export interface DiagArea {
 }
 
 export interface Diagnostico {
+  /** quantas provas entram na análise (as mais recentes) */
+  janelaN: number;
   nProvas: number;
   nCompletas: number;
   media: number | null;
@@ -476,7 +490,9 @@ export function diagnostico(
   areas: Area[],
   plano: PlanoFoco,
   banca = BANCA_FOCO,
+  janela: Janela = N_RECENTES,
 ): Diagnostico | null {
+  const n = janela ?? Infinity;
   const doFoco = provas
     .filter((p) => p.banca === banca)
     .sort((a, b) => dataMs(a.data_feita) - dataMs(b.data_feita) || a.id - b.id);
@@ -488,8 +504,8 @@ export function diagnostico(
   const comp = provasCompletas(doFoco, areasFoco).sort(
     (a, b) => dataMs(a.data_feita) - dataMs(b.data_feita) || a.id - b.id,
   );
-  const recentes = comp.slice(-N_RECENTES);
-  const anteriores = comp.slice(0, -N_RECENTES);
+  const recentes = comp.slice(-n);
+  const anteriores = comp.slice(0, -n);
   const pctRecente = recentes.length ? pct(soma(recentes.map((p) => p.acertos)), soma(recentes.map((p) => p.total_questoes))) : null;
   const pctAnt = anteriores.length ? pct(soma(anteriores.map((p) => p.acertos)), soma(anteriores.map((p) => p.total_questoes))) : null;
 
@@ -506,8 +522,8 @@ export function diagnostico(
       .filter((a) => a.area === ar && temNota(a))
       .sort((a, b) => ordem.get(a.prova_id)! - ordem.get(b.prova_id)!);
     if (linhas.length === 0) continue;
-    const rec = linhas.slice(-N_RECENTES);
-    const ant = linhas.slice(0, -N_RECENTES);
+    const rec = linhas.slice(-n);
+    const ant = linhas.slice(0, -n);
     const pRec = pct(soma(rec.map((a) => a.acertos)), soma(rec.map((a) => a.total)))!;
     const pAnt = ant.length ? pct(soma(ant.map((a) => a.acertos)), soma(ant.map((a) => a.total))) : null;
     const meta = plano.metas[ar] ?? 70;
@@ -563,6 +579,7 @@ export function diagnostico(
   for (const p of comp) if (!melhor || p.pct > melhor.pct) melhor = p;
 
   return {
+    janelaN: recentes.length,
     nProvas: doFoco.length,
     nCompletas: comp.length,
     media: comp.length ? soma(comp.map((p) => p.pct)) / comp.length : null,
@@ -636,9 +653,10 @@ function desvio(xs: number[]): number {
  * Média, oscilação (desvio padrão) e faixa de cada área nas provas da banca.
  * Pilar seguro = acima da sua média geral e oscila pouco; volátil = oscila muito.
  */
-export function consistencia(provas: Prova[], areas: Area[], banca = BANCA_FOCO): Consistencia[] {
+export function consistencia(provas: Prova[], areas: Area[], banca = BANCA_FOCO, janela: Janela = null): Consistencia[] {
   const f = filtrarBanca(provas, areas, banca);
-  const comNota = f.areas.filter(temNota);
+  const dentro = idsJanela(provas, areas, janela, banca);
+  const comNota = f.areas.filter((a) => temNota(a) && (janela === null || dentro.has(a.prova_id)));
   const todas = comNota.map((a) => (a.acertos / a.total) * 100);
   const mediaGeral = todas.length ? soma(todas) / todas.length : 0;
   const res: Consistencia[] = [];
@@ -672,10 +690,19 @@ export interface PontoTempo {
   pct: number;
   /** média das últimas 3 provas até esta (inclusive) */
   movel: number;
+  /** está dentro do período analisado? */
+  dentro: boolean;
 }
 
 /** Provas completas da banca em ordem de data, com média móvel de 3. */
-export function serieTempo(provas: Prova[], areas: Area[], banca = BANCA_FOCO, janela = 3): PontoTempo[] {
+export function serieTempo(
+  provas: Prova[],
+  areas: Area[],
+  banca = BANCA_FOCO,
+  janela = 3,
+  periodo: Janela = null,
+): PontoTempo[] {
+  const ids = idsJanela(provas, areas, periodo, banca);
   const f = filtrarBanca(provas, areas, banca);
   const comp = provasCompletas(f.provas, f.areas)
     .filter((p) => p.data_feita)
@@ -689,6 +716,7 @@ export function serieTempo(provas: Prova[], areas: Area[], banca = BANCA_FOCO, j
       rotulo: `${p.banca} ${p.ano}`,
       pct: p.pct,
       movel: arred1(soma(jan.map((x) => x.pct)) / jan.length),
+      dentro: periodo === null || ids.has(p.id),
     };
   });
 }
@@ -702,19 +730,23 @@ export interface CelulaMapa {
 }
 export interface LinhaMapa {
   prova: Prova;
+  /** está dentro do período analisado? */
+  dentro: boolean;
   geral: number | null;
   celulas: CelulaMapa[];
 }
 
 /** Mapa de calor: cada prova da banca (mais antiga em cima) × cada área. */
-export function mapaCalor(provas: Prova[], areas: Area[], banca = BANCA_FOCO): LinhaMapa[] {
+export function mapaCalor(provas: Prova[], areas: Area[], banca = BANCA_FOCO, janela: Janela = null): LinhaMapa[] {
   const f = filtrarBanca(provas, areas, banca);
+  const ids = idsJanela(provas, areas, janela, banca);
   return [...f.provas]
     .sort((a, b) => dataMs(a.data_feita) - dataMs(b.data_feita) || a.id - b.id)
     .map((p) => {
       const ap = f.areas.filter((a) => a.prova_id === p.id);
       return {
         prova: p,
+        dentro: janela === null || ids.has(p.id),
         geral: pct(p.acertos, p.total_questoes),
         celulas: AREAS.map((ar) => {
           const a = ap.find((x) => x.area === ar);

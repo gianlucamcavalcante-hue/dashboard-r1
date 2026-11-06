@@ -273,3 +273,47 @@ describe("análises avançadas", () => {
     expect(csv.split("\n")[0]).toContain("Obstetrícia acertos");
   });
 });
+
+import { idsJanela } from "../calc";
+
+describe("período: só as últimas provas", () => {
+  const ps: Prova[] = [1, 2, 3, 4].map((i) => ({
+    id: 300 + i, banca: "USP-SP", ano: 2018 + i, data_feita: `2026-0${i}-01`, total_questoes: 0, acertos: 0,
+  }));
+  // Cirurgia: 20% nas duas primeiras, 80% nas duas últimas
+  const as: Area[] = ps.flatMap((p, k) =>
+    AREAS.map((area) => {
+      const total = 20;
+      const acertos = area === "Cirurgia" ? (k < 2 ? 4 : 16) : 12;
+      return { id: idArea++, prova_id: p.id, area, acertos, total, status: "feita", estudada: true };
+    }),
+  );
+  for (const p of ps) {
+    const ap = as.filter((a) => a.prova_id === p.id);
+    p.total_questoes = ap.reduce((s, a) => s + a.total, 0);
+    p.acertos = ap.reduce((s, a) => s + a.acertos, 0);
+  }
+
+  it("pega só as N mais recentes", () => {
+    expect([...idsJanela(ps, as, 2)]).toEqual([303, 304]);
+    expect(idsJanela(ps, as, null).size).toBe(4);
+  });
+
+  it("diagnóstico das últimas 2 ignora o começo do ano", () => {
+    const d2 = diagnostico(ps, as, planoPadrao(70), "USP-SP", 2)!;
+    expect(d2.janelaN).toBe(2);
+    expect(d2.areas.find((a) => a.area === "Cirurgia")!.pctRecente).toBe(80);
+    expect(d2.areas.find((a) => a.area === "Cirurgia")!.tendencia).toBe(60);
+    const dt = diagnostico(ps, as, planoPadrao(70), "USP-SP", null)!;
+    expect(dt.areas.find((a) => a.area === "Cirurgia")!.pctRecente).toBe(50);
+    expect(dt.tendencia).toBeNull();
+  });
+
+  it("consistência e mapa respeitam o período", () => {
+    const c = consistencia(ps, as, "USP-SP", 2).find((x) => x.area === "Cirurgia")!;
+    expect(c.n).toBe(2);
+    expect(c.media).toBe(80);
+    const m = mapaCalor(ps, as, "USP-SP", 2);
+    expect(m.map((l) => l.dentro)).toEqual([false, false, true, true]);
+  });
+});
